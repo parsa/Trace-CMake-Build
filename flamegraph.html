@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CMake Build Process Flamegraph</title>
+  <style>
+    :root {
+      --bg: #f8f9fa;
+      --bg-secondary: #ffffff;
+      --text: #24292f;
+      --text-muted: #57606a;
+      --border: #d0d7de;
+      --accent: #0969da;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 20px;
+    }
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: var(--accent);
+    }
+    .controls {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .controls label {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+    select, button, input[type="text"] {
+      font-family: inherit;
+      font-size: 0.85rem;
+      padding: 8px 16px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg-secondary);
+      color: var(--text);
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    input[type="text"] {
+      min-width: 300px;
+      cursor: text;
+    }
+    select:hover, button:hover, input[type="text"]:focus {
+      border-color: var(--accent);
+      outline: none;
+    }
+    .stats {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 20px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+    }
+    .stat {
+      text-align: center;
+    }
+    .stat-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .stat-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    #flamegraph {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow-x: auto;
+      padding: 16px;
+      min-height: 200px;
+    }
+    .flame-row {
+      display: flex;
+      margin-bottom: 2px;
+      min-height: 28px;
+    }
+    .flame-block {
+      position: relative;
+      height: 26px;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: filter 0.15s, transform 0.1s;
+      display: flex;
+      align-items: center;
+      padding: 0 6px;
+      overflow: hidden;
+      font-size: 0.7rem;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      border: 1px solid rgba(0,0,0,0.2);
+      margin-right: 1px;
+    }
+    .flame-block:hover {
+      filter: brightness(1.2);
+      transform: translateY(-1px);
+      z-index: 10;
+    }
+    .flame-block .label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    }
+    .tooltip {
+      position: fixed;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 0.8rem;
+      max-width: 500px;
+      max-height: 400px;
+      overflow-y: auto;
+      z-index: 1000;
+      pointer-events: none;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    .tooltip-title {
+      font-weight: 600;
+      color: var(--accent);
+      margin-bottom: 8px;
+      word-break: break-all;
+    }
+    .tooltip-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 4px;
+    }
+    .tooltip-row .key {
+      color: var(--text-muted);
+    }
+    .tooltip-row .value {
+      color: var(--text);
+      text-align: right;
+    }
+    .tooltip-cmd {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      word-break: break-all;
+    }
+    .tooltip-section {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
+    .tooltip-section-title {
+      font-weight: 600;
+      color: var(--accent);
+      margin-bottom: 4px;
+      font-size: 0.75rem;
+    }
+    .tooltip-file {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      word-break: break-all;
+      padding: 2px 0;
+    }
+    .tooltip-rsp {
+      margin-bottom: 8px;
+    }
+    .tooltip-rsp-path {
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--accent);
+      margin-bottom: 2px;
+    }
+    .tooltip-rsp-contents {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      word-break: break-all;
+      background: var(--bg);
+      padding: 6px 8px;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      white-space: pre-wrap;
+    }
+    .legend {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+    .legend-color {
+      width: 16px;
+      height: 16px;
+      border-radius: 3px;
+    }
+    .hidden { display: none; }
+    .error {
+      color: #f85149;
+      padding: 20px;
+      text-align: center;
+    }
+    .loading {
+      color: var(--text-muted);
+      padding: 20px;
+      text-align: center;
+    }
+    .drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: 8px;
+      padding: 40px;
+      text-align: center;
+      color: var(--text-muted);
+      margin-bottom: 20px;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .drop-zone.drag-over {
+      border-color: var(--accent);
+      background: rgba(88, 166, 255, 0.1);
+    }
+    .details-panel {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-top: 20px;
+      display: flex;
+      flex-direction: column;
+      min-height: calc(100vh - 100px);
+    }
+    .details-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 24px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .details-header h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--accent);
+      margin: 0;
+    }
+    .details-header button {
+      background: none;
+      border: none;
+      font-size: 1.4rem;
+      cursor: pointer;
+      color: var(--text-muted);
+      padding: 6px 10px;
+      border-radius: 4px;
+    }
+    .details-header button:hover {
+      background: var(--border);
+      color: var(--text);
+    }
+    .details-content {
+      padding: 24px;
+      flex: 1;
+      overflow-y: auto;
+    }
+    .details-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .details-item {
+      background: var(--bg);
+      padding: 14px 16px;
+      border-radius: 8px;
+    }
+    .details-item .label {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+    .details-item .value {
+      font-size: 0.9rem;
+      color: var(--text);
+      word-break: break-all;
+    }
+    .details-section {
+      margin-top: 24px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+    }
+    .details-section-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--accent);
+      margin-bottom: 12px;
+    }
+    .details-cmdline {
+      background: var(--bg);
+      padding: 12px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      word-break: break-all;
+      white-space: pre-wrap;
+      color: var(--text);
+    }
+    .details-rsp {
+      margin-bottom: 16px;
+    }
+    .details-rsp-path {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--accent);
+      margin-bottom: 6px;
+      word-break: break-all;
+    }
+    .details-rsp-contents {
+      background: var(--bg);
+      padding: 12px;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      word-break: break-all;
+      white-space: pre-wrap;
+      color: var(--text-muted);
+      max-height: none;
+    }
+  </style>
+</head>
+<body>
+  <h1>🔥 CMake Build Process Flamegraph</h1>
+  
+  <div class="drop-zone" id="dropZone">
+    Drop a JSON file here, or use the controls below
+  </div>
+
+  <div class="controls">
+    <label>JSON file:</label>
+    <input type="text" id="jsonPath" value="../cfg.json" placeholder="Path to JSON file (relative to this HTML)">
+    <button id="loadBtn">Load</button>
+    <label style="margin-left: 16px;">Color by:</label>
+    <select id="colorMode">
+      <option value="type">Process Type</option>
+      <option value="cpu">CPU Time</option>
+      <option value="io">I/O Activity</option>
+    </select>
+  </div>
+
+  <div class="stats" id="stats"></div>
+  
+  <div id="flamegraph"><div class="loading">Enter a JSON path and click Load</div></div>
+  
+  <div class="legend" id="legend"></div>
+
+  <div class="details-panel hidden" id="detailsPanel">
+    <div class="details-header">
+      <h2 id="detailsTitle">Process Details</h2>
+      <button id="closeDetails">✕</button>
+    </div>
+    <div class="details-content" id="detailsContent"></div>
+  </div>
+
+  <div class="tooltip hidden" id="tooltip"></div>
+
+  <script>
+    // Process type colors
+    const typeColors = {
+      'cmake.exe': '#4fc3f7',
+      'MSBuild.exe': '#ab47bc',
+      'cl.exe': '#ef5350',
+      'link.exe': '#ff7043',
+      'lib.exe': '#ffa726',
+      'Tracker.exe': '#78909c',
+      'cmd.exe': '#66bb6a',
+      'conhost.exe': '#90a4ae',
+      'default': '#5c6bc0'
+    };
+
+    function getProcessType(name) {
+      const n = (name || '').toLowerCase();
+      for (const key of Object.keys(typeColors)) {
+        if (n.includes(key.toLowerCase())) return key;
+      }
+      return 'default';
+    }
+
+    function getColor(proc, mode, maxCpu, maxIo) {
+      if (mode === 'type') {
+        return typeColors[getProcessType(proc.name)] || typeColors.default;
+      } else if (mode === 'cpu') {
+        const cpu = (proc.cpu_user_s || 0) + (proc.cpu_system_s || 0);
+        const ratio = maxCpu > 0 ? cpu / maxCpu : 0;
+        const r = Math.round(255 * ratio);
+        const g = Math.round(100 * (1 - ratio));
+        const b = 50;
+        return `rgb(${r},${g},${b})`;
+      } else if (mode === 'io') {
+        const io = (proc.io_read_bytes || 0) + (proc.io_write_bytes || 0);
+        const ratio = maxIo > 0 ? io / maxIo : 0;
+        const r = Math.round(50 + 150 * ratio);
+        const g = Math.round(200 * (1 - ratio));
+        const b = Math.round(255 * ratio);
+        return `rgb(${r},${g},${b})`;
+      }
+      return typeColors.default;
+    }
+
+    function formatBytes(b) {
+      if (b >= 1e9) return (b / 1e9).toFixed(2) + ' GB';
+      if (b >= 1e6) return (b / 1e6).toFixed(2) + ' MB';
+      if (b >= 1e3) return (b / 1e3).toFixed(2) + ' KB';
+      return b + ' B';
+    }
+
+    function formatDuration(s) {
+      if (s >= 60) return (s / 60).toFixed(2) + ' min';
+      return s.toFixed(3) + ' s';
+    }
+
+    let currentData = null;
+    let globalStart = 0;
+    let globalEnd = 0;
+
+    function buildTree(data) {
+      const procMap = new Map(data.processes.map(p => [p.pid, { ...p, children: [] }]));
+      
+      // Find root (has label or no parent in our set)
+      let root = null;
+      for (const p of procMap.values()) {
+        if (p.label) { root = p; break; }
+      }
+      if (!root) {
+        for (const p of procMap.values()) {
+          if (!procMap.has(p.ppid)) { root = p; break; }
+        }
+      }
+
+      // Build tree from edges
+      for (const e of data.edges) {
+        const parent = procMap.get(e.parent);
+        const child = procMap.get(e.child);
+        if (parent && child) {
+          parent.children.push(child);
+        }
+      }
+
+      return { root, procMap };
+    }
+
+    function getTimeRange(data) {
+      let minStart = Infinity, maxEnd = -Infinity;
+      for (const p of data.processes) {
+        const start = new Date(p.start_time).getTime();
+        const end = new Date(p.end_time).getTime();
+        if (start < minStart) minStart = start;
+        if (end > maxEnd) maxEnd = end;
+      }
+      return { start: minStart, end: maxEnd };
+    }
+
+    function flattenToRows(node, depth = 0, rows = []) {
+      if (!rows[depth]) rows[depth] = [];
+      rows[depth].push(node);
+      for (const child of node.children || []) {
+        flattenToRows(child, depth + 1, rows);
+      }
+      return rows;
+    }
+
+    function render(data) {
+      currentData = data;
+      const container = document.getElementById('flamegraph');
+      const statsDiv = document.getElementById('stats');
+      const legendDiv = document.getElementById('legend');
+      const colorMode = document.getElementById('colorMode').value;
+
+      if (!data || !data.processes || data.processes.length === 0) {
+        container.innerHTML = '<div class="error">No process data found</div>';
+        return;
+      }
+
+      const { root, procMap } = buildTree(data);
+      if (!root) {
+        container.innerHTML = '<div class="error">Could not determine root process</div>';
+        return;
+      }
+
+      const timeRange = getTimeRange(data);
+      globalStart = timeRange.start;
+      globalEnd = timeRange.end;
+      const totalDuration = (globalEnd - globalStart) / 1000;
+
+      // Compute stats
+      let totalCpu = 0, totalIoRead = 0, totalIoWrite = 0, maxCpu = 0, maxIo = 0;
+      for (const p of data.processes) {
+        const cpu = (p.cpu_user_s || 0) + (p.cpu_system_s || 0);
+        totalCpu += cpu;
+        totalIoRead += p.io_read_bytes || 0;
+        totalIoWrite += p.io_write_bytes || 0;
+        if (cpu > maxCpu) maxCpu = cpu;
+        const io = (p.io_read_bytes || 0) + (p.io_write_bytes || 0);
+        if (io > maxIo) maxIo = io;
+      }
+
+      statsDiv.innerHTML = `
+        <div class="stat"><div class="stat-value">${data.processes.length}</div><div class="stat-label">Processes</div></div>
+        <div class="stat"><div class="stat-value">${formatDuration(totalDuration)}</div><div class="stat-label">Total Duration</div></div>
+        <div class="stat"><div class="stat-value">${formatDuration(totalCpu)}</div><div class="stat-label">Total CPU Time</div></div>
+        <div class="stat"><div class="stat-value">${formatBytes(totalIoRead)}</div><div class="stat-label">I/O Read</div></div>
+        <div class="stat"><div class="stat-value">${formatBytes(totalIoWrite)}</div><div class="stat-label">I/O Write</div></div>
+      `;
+
+      // Build rows for timeline view
+      const rows = flattenToRows(root);
+      const containerWidth = container.clientWidth - 32;
+      const msPerPixel = (globalEnd - globalStart) / containerWidth;
+
+      container.innerHTML = '';
+      for (const row of rows) {
+        const rowDiv = document.createElement('div');
+        rowDiv.className = 'flame-row';
+        
+        // Sort by start time
+        row.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+        
+        let lastEnd = globalStart;
+        for (const proc of row) {
+          const start = new Date(proc.start_time).getTime();
+          const end = new Date(proc.end_time).getTime();
+          
+          // Add spacer if gap
+          if (start > lastEnd) {
+            const gapWidth = (start - lastEnd) / msPerPixel;
+            if (gapWidth > 0) {
+              const spacer = document.createElement('div');
+              spacer.style.width = gapWidth + 'px';
+              spacer.style.flexShrink = '0';
+              rowDiv.appendChild(spacer);
+            }
+          }
+          
+          const width = Math.max(4, (end - start) / msPerPixel);
+          const block = document.createElement('div');
+          block.className = 'flame-block';
+          block.style.width = width + 'px';
+          block.style.flexShrink = '0';
+          block.style.backgroundColor = getColor(proc, colorMode, maxCpu, maxIo);
+          
+          const shortName = (proc.name || 'unknown').replace('.exe', '');
+          block.innerHTML = `<span class="label">${shortName}</span>`;
+          
+          block.addEventListener('mouseenter', (e) => showTooltip(e, proc));
+          block.addEventListener('mousemove', (e) => moveTooltip(e));
+          block.addEventListener('mouseleave', hideTooltip);
+          block.addEventListener('click', () => showDetails(proc));
+          
+          rowDiv.appendChild(block);
+          lastEnd = end;
+        }
+        
+        container.appendChild(rowDiv);
+      }
+
+      // Legend
+      if (colorMode === 'type') {
+        legendDiv.innerHTML = Object.entries(typeColors)
+          .filter(([k]) => k !== 'default')
+          .map(([name, color]) => `
+            <div class="legend-item">
+              <div class="legend-color" style="background:${color}"></div>
+              <span>${name}</span>
+            </div>
+          `).join('');
+      } else {
+        legendDiv.innerHTML = `<div class="legend-item">Color intensity shows ${colorMode === 'cpu' ? 'CPU time' : 'I/O activity'}</div>`;
+      }
+    }
+
+    const tooltip = document.getElementById('tooltip');
+    
+    function showTooltip(e, proc) {
+      const cmdline = (proc.cmdline || []).join(' ');
+      const responseFiles = proc.response_files || {};
+      const responseFileEntries = Object.entries(responseFiles);
+      
+      let responseFilesHtml = '';
+      if (responseFileEntries.length > 0) {
+        responseFilesHtml = `
+          <div class="tooltip-section">
+            <div class="tooltip-section-title">Response Files (${responseFileEntries.length})</div>
+            ${responseFileEntries.map(([path, contents]) => `
+              <div class="tooltip-rsp">
+                <div class="tooltip-rsp-path">${path.split('\\').pop()}</div>
+                <div class="tooltip-rsp-contents">${contents.length > 300 ? contents.slice(0, 300) + '...' : contents}</div>
+              </div>
+            `).join('')}
+          </div>
+        `;
+      }
+      
+      tooltip.innerHTML = `
+        <div class="tooltip-title">${proc.name} (PID ${proc.pid})</div>
+        <div class="tooltip-row"><span class="key">Duration</span><span class="value">${formatDuration(proc.duration_s || 0)}</span></div>
+        <div class="tooltip-row"><span class="key">CPU User</span><span class="value">${formatDuration(proc.cpu_user_s || 0)}</span></div>
+        <div class="tooltip-row"><span class="key">CPU System</span><span class="value">${formatDuration(proc.cpu_system_s || 0)}</span></div>
+        <div class="tooltip-row"><span class="key">I/O Read</span><span class="value">${formatBytes(proc.io_read_bytes || 0)}</span></div>
+        <div class="tooltip-row"><span class="key">I/O Write</span><span class="value">${formatBytes(proc.io_write_bytes || 0)}</span></div>
+        <div class="tooltip-row"><span class="key">Working Set</span><span class="value">${formatBytes(proc.working_set_bytes || 0)}</span></div>
+        <div class="tooltip-cmd">${cmdline.length > 200 ? cmdline.slice(0, 200) + '...' : cmdline}</div>
+        ${responseFilesHtml}
+      `;
+      tooltip.classList.remove('hidden');
+      moveTooltip(e);
+    }
+    
+    function moveTooltip(e) {
+      const x = Math.min(e.clientX + 16, window.innerWidth - tooltip.offsetWidth - 20);
+      const y = Math.min(e.clientY + 16, window.innerHeight - tooltip.offsetHeight - 20);
+      tooltip.style.left = x + 'px';
+      tooltip.style.top = y + 'px';
+    }
+    
+    function hideTooltip() {
+      tooltip.classList.add('hidden');
+    }
+
+    const detailsPanel = document.getElementById('detailsPanel');
+    const detailsTitle = document.getElementById('detailsTitle');
+    const detailsContent = document.getElementById('detailsContent');
+
+    function showDetails(proc) {
+      const cmdline = (proc.cmdline || []).join(' ');
+      const responseFiles = proc.response_files || {};
+      const responseFileEntries = Object.entries(responseFiles);
+
+      detailsTitle.textContent = `${proc.name} (PID ${proc.pid})`;
+      
+      let responseFilesHtml = '';
+      if (responseFileEntries.length > 0) {
+        responseFilesHtml = `
+          <div class="details-section">
+            <div class="details-section-title">Response Files (${responseFileEntries.length})</div>
+            ${responseFileEntries.map(([path, contents]) => `
+              <div class="details-rsp">
+                <div class="details-rsp-path">${path}</div>
+                <div class="details-rsp-contents">${escapeHtml(contents)}</div>
+              </div>
+            `).join('')}
+          </div>
+        `;
+      }
+
+      detailsContent.innerHTML = `
+        <div class="details-grid">
+          <div class="details-item"><div class="label">PID</div><div class="value">${proc.pid}</div></div>
+          <div class="details-item"><div class="label">Parent PID</div><div class="value">${proc.ppid || 'N/A'}</div></div>
+          <div class="details-item"><div class="label">Start Time</div><div class="value">${proc.start_time || 'N/A'}</div></div>
+          <div class="details-item"><div class="label">End Time</div><div class="value">${proc.end_time || 'N/A'}</div></div>
+          <div class="details-item"><div class="label">Duration</div><div class="value">${formatDuration(proc.duration_s || 0)}</div></div>
+          <div class="details-item"><div class="label">CPU User</div><div class="value">${formatDuration(proc.cpu_user_s || 0)}</div></div>
+          <div class="details-item"><div class="label">CPU System</div><div class="value">${formatDuration(proc.cpu_system_s || 0)}</div></div>
+          <div class="details-item"><div class="label">I/O Read</div><div class="value">${formatBytes(proc.io_read_bytes || 0)}</div></div>
+          <div class="details-item"><div class="label">I/O Write</div><div class="value">${formatBytes(proc.io_write_bytes || 0)}</div></div>
+          <div class="details-item"><div class="label">Working Set</div><div class="value">${formatBytes(proc.working_set_bytes || 0)}</div></div>
+          <div class="details-item"><div class="label">Private Bytes</div><div class="value">${formatBytes(proc.private_bytes || 0)}</div></div>
+          <div class="details-item"><div class="label">Executable</div><div class="value">${proc.exe || 'N/A'}</div></div>
+        </div>
+        <div class="details-section">
+          <div class="details-section-title">Command Line</div>
+          <div class="details-cmdline">${escapeHtml(cmdline)}</div>
+        </div>
+        ${responseFilesHtml}
+      `;
+
+      detailsPanel.classList.remove('hidden');
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    document.getElementById('closeDetails').addEventListener('click', () => {
+      detailsPanel.classList.add('hidden');
+    });
+
+    async function loadFromPath(path) {
+      const container = document.getElementById('flamegraph');
+      container.innerHTML = '<div class="loading">Loading...</div>';
+      
+      try {
+        const response = await fetch(path);
+        if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        const data = await response.json();
+        render(data);
+      } catch (err) {
+        container.innerHTML = `<div class="error">Failed to load: ${err.message}</div>`;
+      }
+    }
+
+    function loadFromFile(file) {
+      const container = document.getElementById('flamegraph');
+      container.innerHTML = '<div class="loading">Loading...</div>';
+      
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = JSON.parse(e.target.result);
+          render(data);
+        } catch (err) {
+          container.innerHTML = `<div class="error">Failed to parse JSON: ${err.message}</div>`;
+        }
+      };
+      reader.onerror = () => {
+        container.innerHTML = '<div class="error">Failed to read file</div>';
+      };
+      reader.readAsText(file);
+    }
+
+    // Event listeners
+    document.getElementById('loadBtn').addEventListener('click', () => {
+      loadFromPath(document.getElementById('jsonPath').value);
+    });
+    
+    document.getElementById('jsonPath').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') loadFromPath(document.getElementById('jsonPath').value);
+    });
+
+    document.getElementById('colorMode').addEventListener('change', () => {
+      if (currentData) render(currentData);
+    });
+
+    // Drag and drop
+    const dropZone = document.getElementById('dropZone');
+    
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.classList.add('drag-over');
+    });
+    
+    dropZone.addEventListener('dragleave', () => {
+      dropZone.classList.remove('drag-over');
+    });
+    
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      const file = e.dataTransfer.files[0];
+      if (file && file.name.endsWith('.json')) {
+        loadFromFile(file);
+      }
+    });
+
+    // No auto-load - user clicks Load button
+  </script>
+</body>
+</html>
