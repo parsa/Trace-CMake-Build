@@ -1,17 +1,20 @@
 # Trace CMake Build
 
-A toolkit for tracing and visualizing CMake/MSBuild process trees on Windows. Captures detailed metrics about every process spawned during a build—CPU time, I/O, memory, command lines, and MSVC response files—then lets you explore the data in multiple formats.
+A cross-platform toolkit for tracing and visualizing process trees. Captures detailed metrics about every process spawned during a command—CPU time, I/O, memory, command lines—then lets you explore the data in multiple formats.
+
+Originally designed for CMake/MSBuild builds, but works with any command that spawns child processes.
 
 ## Features
 
+- **Cross-platform** — Works on Windows, macOS, and Linux
 - **Process tracing** — Monitor all processes spawned by a command with high-frequency polling
-- **Rich metrics** — CPU time, I/O bytes, working set, private bytes, page faults
-- **Response file capture** — Automatically reads MSVC `.rsp` files and MSBuild temp scripts
-- **Multiple output formats:**
-  - JSON process graph
+- **Rich metrics** — CPU time, I/O bytes, working set, private bytes (availability varies by platform)
+- **Response file capture** — Automatically reads MSVC `.rsp` files and MSBuild temp scripts (Windows)
+- **Multiple visualizations:**
+  - Interactive HTML flamegraph (timeline view)
+  - Process dependency graph (Sankey/Tree/Radial layouts)
   - Chrome Trace Event format (for `chrome://tracing` or [Perfetto](https://ui.perfetto.dev))
   - `compile_commands.json` for clangd/IDE integration
-  - Interactive HTML flamegraph
 
 ## Installation
 
@@ -23,17 +26,38 @@ pip install -r requirements.txt
 
 ### 1. Trace a build
 
-```powershell
+```
 python trace_cmake_build.py --output build_trace.json -- cmake --build . --config Release
 ```
 
-This runs your CMake build while capturing the entire process tree.
+This runs your command while capturing the entire process tree.
 
-### 2. View in Chrome/Perfetto
+### 2. Interactive flamegraph
+
+Open `flamegraph.html` in a browser, then drag & drop your JSON trace file onto the page.
+
+Features:
+- Timeline view of all processes
+- Color by process type, CPU time, or I/O activity
+- Hover for quick stats, click for full details
+- Save as self-contained HTML
+
+### 3. Process dependency graph
+
+Open `process_graph.html` in a browser, then drag & drop your JSON trace file.
+
+Features:
+- **Sankey Diagram** — Horizontal flow layout (default)
+- **Tree Layout** — Hierarchical top-down view
+- **Radial Layout** — Circular layout for compact viewing
+- Pan, zoom, and click nodes to explore
+- Highlights parent/child connections
+
+### 4. View in Chrome/Perfetto
 
 Convert to Chrome Trace Event format:
 
-```powershell
+```
 python trace_to_chromium.py build_trace.json -o build_trace_chrome.json
 ```
 
@@ -41,19 +65,13 @@ Open `build_trace_chrome.json` in:
 - `chrome://tracing` (paste URL in Chrome)
 - https://ui.perfetto.dev (drag & drop)
 
-### 3. Generate compile_commands.json
+### 5. Generate compile_commands.json
 
 Extract compiler invocations for clangd/IDE support:
 
-```powershell
+```
 python trace_to_compile_commands.py build_trace.json -o compile_commands.json
 ```
-
-### 4. Interactive flamegraph
-
-Open `flamegraph.html` in a browser, then either:
-- Drag & drop your JSON file onto the page
-- Enter the path to your JSON file and click Load
 
 ## Usage
 
@@ -133,14 +151,25 @@ The trace JSON contains:
 }
 ```
 
+### Platform-specific fields
+
+| Field | Windows | macOS | Linux |
+|-------|---------|-------|-------|
+| `cpu_user_s`, `cpu_system_s` | Yes | Yes | Yes |
+| `working_set_bytes` (RSS) | Yes | Yes | Yes |
+| `io_read_bytes`, `io_write_bytes` | Yes | No (needs root) | Yes |
+| `peak_working_set_bytes` | Yes | No | No |
+| `private_bytes` | Yes | No | Yes |
+| `response_files` | Yes (MSVC) | No | No |
+
+Unavailable fields are `null` in the JSON output (not `0`).
+
 ## Requirements
 
-- **Windows** (uses Windows-specific APIs for process monitoring)
 - **Python 3.10+** (uses modern type hints)
-- **psutil**
-- **pywin32**
+- **psutil** (cross-platform process monitoring)
+- **pywin32** (optional, Windows-only, for PE file metadata)
 
 ## License
 
 [Boost Software License 1.0](LICENSE)
-

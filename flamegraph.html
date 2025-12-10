@@ -38,7 +38,7 @@
       color: var(--text-muted);
       font-size: 0.85rem;
     }
-    select, button, input[type="text"] {
+    select, button {
       font-family: inherit;
       font-size: 0.85rem;
       padding: 8px 16px;
@@ -49,11 +49,7 @@
       cursor: pointer;
       transition: border-color 0.2s;
     }
-    input[type="text"] {
-      min-width: 300px;
-      cursor: text;
-    }
-    select:hover, button:hover, input[type="text"]:focus {
+    select:hover, button:hover {
       border-color: var(--accent);
       outline: none;
     }
@@ -217,7 +213,7 @@
       height: 16px;
       border-radius: 3px;
     }
-    .hidden { display: none; }
+    .hidden { display: none !important; }
     .error {
       color: #f85149;
       padding: 20px;
@@ -236,10 +232,57 @@
       color: var(--text-muted);
       margin-bottom: 20px;
       transition: border-color 0.2s, background 0.2s;
+      cursor: pointer;
+    }
+    .drop-zone:hover {
+      border-color: var(--accent);
+      background: rgba(9, 105, 218, 0.05);
     }
     .drop-zone.drag-over {
       border-color: var(--accent);
-      background: rgba(88, 166, 255, 0.1);
+      background: rgba(9, 105, 218, 0.1);
+    }
+    .drop-zone.has-data {
+      padding: 16px;
+      border-style: solid;
+      cursor: default;
+    }
+    .drop-zone.has-data:hover {
+      background: transparent;
+    }
+    .drop-icon {
+      font-size: 2.5rem;
+      margin-bottom: 12px;
+    }
+    .drop-text {
+      font-size: 1rem;
+      font-weight: 500;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+    .drop-hint {
+      font-size: 0.8rem;
+    }
+    .save-btn {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }
+    .save-btn:hover:not(:disabled) {
+      background: #0860ca;
+      border-color: #0860ca;
+    }
+    .save-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .data-status {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-left: 8px;
+    }
+    .data-status.loaded {
+      color: #2da44e;
     }
     .details-panel {
       background: var(--bg-secondary);
@@ -352,24 +395,26 @@
   <h1>🔥 CMake Build Process Flamegraph</h1>
   
   <div class="drop-zone" id="dropZone">
-    Drop a JSON file here, or use the controls below
+    <div class="drop-icon">📂</div>
+    <div class="drop-text">Drop a JSON trace file here</div>
+    <div class="drop-hint">or click to browse</div>
+    <input type="file" id="fileInput" accept=".json" style="display: none;">
   </div>
 
   <div class="controls">
-    <label>JSON file:</label>
-    <input type="text" id="jsonPath" value="../cfg.json" placeholder="Path to JSON file (relative to this HTML)">
-    <button id="loadBtn">Load</button>
-    <label style="margin-left: 16px;">Color by:</label>
+    <label>Color by:</label>
     <select id="colorMode">
       <option value="type">Process Type</option>
       <option value="cpu">CPU Time</option>
       <option value="io">I/O Activity</option>
     </select>
+    <button id="saveBtn" class="save-btn" disabled>💾 Save HTML</button>
+    <span id="dataStatus" class="data-status"></span>
   </div>
 
   <div class="stats" id="stats"></div>
   
-  <div id="flamegraph"><div class="loading">Enter a JSON path and click Load</div></div>
+  <div id="flamegraph"><div class="loading">Drop a JSON file above to visualize</div></div>
   
   <div class="legend" id="legend"></div>
 
@@ -384,39 +429,50 @@
   <div class="tooltip hidden" id="tooltip"></div>
 
   <script>
-    // Process type colors
-    const typeColors = {
-      'cmake.exe': '#4fc3f7',
-      'MSBuild.exe': '#ab47bc',
-      'cl.exe': '#ef5350',
-      'link.exe': '#ff7043',
-      'lib.exe': '#ffa726',
-      'Tracker.exe': '#78909c',
-      'cmd.exe': '#66bb6a',
-      'conhost.exe': '#90a4ae',
-      'default': '#5c6bc0'
-    };
+    // Generate consistent colors from process names using hash
+    const colorPalette = [
+      '#ef5350', '#ec407a', '#ab47bc', '#7e57c2', '#5c6bc0',
+      '#42a5f5', '#29b6f6', '#26c6da', '#26a69a', '#66bb6a',
+      '#9ccc65', '#d4e157', '#ffee58', '#ffca28', '#ffa726',
+      '#ff7043', '#8d6e63', '#78909c', '#4fc3f7', '#4db6ac',
+    ];
 
-    function getProcessType(name) {
-      const n = (name || '').toLowerCase();
-      for (const key of Object.keys(typeColors)) {
-        if (n.includes(key.toLowerCase())) return key;
+    function hashString(str) {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) - hash) + str.charCodeAt(i);
+        hash |= 0;
       }
-      return 'default';
+      return Math.abs(hash);
+    }
+
+    function normalizeProcessName(name) {
+      // Strip common suffixes and normalize
+      return (name || 'unknown').toLowerCase().replace(/\.exe$/i, '');
+    }
+
+    function getTypeColor(name) {
+      const normalized = normalizeProcessName(name);
+      const index = hashString(normalized) % colorPalette.length;
+      return colorPalette[index];
     }
 
     function getColor(proc, mode, maxCpu, maxIo) {
       if (mode === 'type') {
-        return typeColors[getProcessType(proc.name)] || typeColors.default;
+        return getTypeColor(proc.name);
       } else if (mode === 'cpu') {
-        const cpu = (proc.cpu_user_s || 0) + (proc.cpu_system_s || 0);
+        const cpu = (proc.cpu_user_s ?? 0) + (proc.cpu_system_s ?? 0);
         const ratio = maxCpu > 0 ? cpu / maxCpu : 0;
         const r = Math.round(255 * ratio);
         const g = Math.round(100 * (1 - ratio));
         const b = 50;
         return `rgb(${r},${g},${b})`;
       } else if (mode === 'io') {
-        const io = (proc.io_read_bytes || 0) + (proc.io_write_bytes || 0);
+        // Use gray for processes with no I/O data available
+        if (proc.io_read_bytes == null && proc.io_write_bytes == null) {
+          return '#9e9e9e';  // Gray indicates "no data"
+        }
+        const io = (proc.io_read_bytes ?? 0) + (proc.io_write_bytes ?? 0);
         const ratio = maxIo > 0 ? io / maxIo : 0;
         const r = Math.round(50 + 150 * ratio);
         const g = Math.round(200 * (1 - ratio));
@@ -427,6 +483,7 @@
     }
 
     function formatBytes(b) {
+      if (b == null) return null;  // Distinguish unavailable from zero
       if (b >= 1e9) return (b / 1e9).toFixed(2) + ' GB';
       if (b >= 1e6) return (b / 1e6).toFixed(2) + ' MB';
       if (b >= 1e3) return (b / 1e3).toFixed(2) + ' KB';
@@ -434,13 +491,26 @@
     }
 
     function formatDuration(s) {
+      if (s == null) return null;  // Distinguish unavailable from zero
       if (s >= 60) return (s / 60).toFixed(2) + ' min';
       return s.toFixed(3) + ' s';
+    }
+
+    // Display helpers that show "N/A" for unavailable values
+    function displayBytes(b) {
+      const formatted = formatBytes(b);
+      return formatted !== null ? formatted : '<span style="color:var(--text-muted)">N/A</span>';
+    }
+
+    function displayDuration(s) {
+      const formatted = formatDuration(s);
+      return formatted !== null ? formatted : '<span style="color:var(--text-muted)">N/A</span>';
     }
 
     let currentData = null;
     let globalStart = 0;
     let globalEnd = 0;
+    let selectedProcPid = null; // Track selected process for state saving
 
     function buildTree(data) {
       const procMap = new Map(data.processes.map(p => [p.pid, { ...p, children: [] }]));
@@ -511,24 +581,28 @@
       globalEnd = timeRange.end;
       const totalDuration = (globalEnd - globalStart) / 1000;
 
-      // Compute stats
+      // Compute stats (track whether data is available)
       let totalCpu = 0, totalIoRead = 0, totalIoWrite = 0, maxCpu = 0, maxIo = 0;
+      let hasIoReadData = false, hasIoWriteData = false;
       for (const p of data.processes) {
         const cpu = (p.cpu_user_s || 0) + (p.cpu_system_s || 0);
         totalCpu += cpu;
-        totalIoRead += p.io_read_bytes || 0;
-        totalIoWrite += p.io_write_bytes || 0;
+        if (p.io_read_bytes != null) { totalIoRead += p.io_read_bytes; hasIoReadData = true; }
+        if (p.io_write_bytes != null) { totalIoWrite += p.io_write_bytes; hasIoWriteData = true; }
         if (cpu > maxCpu) maxCpu = cpu;
         const io = (p.io_read_bytes || 0) + (p.io_write_bytes || 0);
         if (io > maxIo) maxIo = io;
       }
 
+      const ioReadDisplay = hasIoReadData ? formatBytes(totalIoRead) : '<span style="color:var(--text-muted)">N/A</span>';
+      const ioWriteDisplay = hasIoWriteData ? formatBytes(totalIoWrite) : '<span style="color:var(--text-muted)">N/A</span>';
+
       statsDiv.innerHTML = `
         <div class="stat"><div class="stat-value">${data.processes.length}</div><div class="stat-label">Processes</div></div>
         <div class="stat"><div class="stat-value">${formatDuration(totalDuration)}</div><div class="stat-label">Total Duration</div></div>
         <div class="stat"><div class="stat-value">${formatDuration(totalCpu)}</div><div class="stat-label">Total CPU Time</div></div>
-        <div class="stat"><div class="stat-value">${formatBytes(totalIoRead)}</div><div class="stat-label">I/O Read</div></div>
-        <div class="stat"><div class="stat-value">${formatBytes(totalIoWrite)}</div><div class="stat-label">I/O Write</div></div>
+        <div class="stat"><div class="stat-value">${ioReadDisplay}</div><div class="stat-label">I/O Read</div></div>
+        <div class="stat"><div class="stat-value">${ioWriteDisplay}</div><div class="stat-label">I/O Write</div></div>
       `;
 
       // Build rows for timeline view
@@ -582,18 +656,36 @@
         container.appendChild(rowDiv);
       }
 
-      // Legend
+      // Legend - dynamically built from actual processes in trace
       if (colorMode === 'type') {
-        legendDiv.innerHTML = Object.entries(typeColors)
-          .filter(([k]) => k !== 'default')
-          .map(([name, color]) => `
+        // Count processes by normalized name
+        const nameCounts = new Map();
+        for (const p of data.processes) {
+          const normalized = normalizeProcessName(p.name);
+          nameCounts.set(normalized, (nameCounts.get(normalized) || 0) + 1);
+        }
+        // Sort by count descending, then alphabetically
+        const sortedNames = [...nameCounts.entries()]
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+          .slice(0, 12);  // Limit legend to top 12
+        
+        legendDiv.innerHTML = sortedNames
+          .map(([name, count]) => `
             <div class="legend-item">
-              <div class="legend-color" style="background:${color}"></div>
-              <span>${name}</span>
+              <div class="legend-color" style="background:${getTypeColor(name)}"></div>
+              <span>${name} (${count})</span>
             </div>
           `).join('');
-      } else {
-        legendDiv.innerHTML = `<div class="legend-item">Color intensity shows ${colorMode === 'cpu' ? 'CPU time' : 'I/O activity'}</div>`;
+      } else if (colorMode === 'cpu') {
+        legendDiv.innerHTML = `<div class="legend-item">Color intensity shows CPU time</div>`;
+      } else if (colorMode === 'io') {
+        legendDiv.innerHTML = `
+          <div class="legend-item">Color intensity shows I/O activity</div>
+          <div class="legend-item">
+            <div class="legend-color" style="background:#9e9e9e"></div>
+            <span>I/O data unavailable</span>
+          </div>
+        `;
       }
     }
 
@@ -621,12 +713,12 @@
       
       tooltip.innerHTML = `
         <div class="tooltip-title">${proc.name} (PID ${proc.pid})</div>
-        <div class="tooltip-row"><span class="key">Duration</span><span class="value">${formatDuration(proc.duration_s || 0)}</span></div>
-        <div class="tooltip-row"><span class="key">CPU User</span><span class="value">${formatDuration(proc.cpu_user_s || 0)}</span></div>
-        <div class="tooltip-row"><span class="key">CPU System</span><span class="value">${formatDuration(proc.cpu_system_s || 0)}</span></div>
-        <div class="tooltip-row"><span class="key">I/O Read</span><span class="value">${formatBytes(proc.io_read_bytes || 0)}</span></div>
-        <div class="tooltip-row"><span class="key">I/O Write</span><span class="value">${formatBytes(proc.io_write_bytes || 0)}</span></div>
-        <div class="tooltip-row"><span class="key">Working Set</span><span class="value">${formatBytes(proc.working_set_bytes || 0)}</span></div>
+        <div class="tooltip-row"><span class="key">Duration</span><span class="value">${displayDuration(proc.duration_s)}</span></div>
+        <div class="tooltip-row"><span class="key">CPU User</span><span class="value">${displayDuration(proc.cpu_user_s)}</span></div>
+        <div class="tooltip-row"><span class="key">CPU System</span><span class="value">${displayDuration(proc.cpu_system_s)}</span></div>
+        <div class="tooltip-row"><span class="key">I/O Read</span><span class="value">${displayBytes(proc.io_read_bytes)}</span></div>
+        <div class="tooltip-row"><span class="key">I/O Write</span><span class="value">${displayBytes(proc.io_write_bytes)}</span></div>
+        <div class="tooltip-row"><span class="key">Working Set</span><span class="value">${displayBytes(proc.working_set_bytes)}</span></div>
         <div class="tooltip-cmd">${cmdline.length > 200 ? cmdline.slice(0, 200) + '...' : cmdline}</div>
         ${responseFilesHtml}
       `;
@@ -650,6 +742,7 @@
     const detailsContent = document.getElementById('detailsContent');
 
     function showDetails(proc) {
+      selectedProcPid = proc.pid; // Track for state saving
       const cmdline = (proc.cmdline || []).join(' ');
       const responseFiles = proc.response_files || {};
       const responseFileEntries = Object.entries(responseFiles);
@@ -677,13 +770,13 @@
           <div class="details-item"><div class="label">Parent PID</div><div class="value">${proc.ppid || 'N/A'}</div></div>
           <div class="details-item"><div class="label">Start Time</div><div class="value">${proc.start_time || 'N/A'}</div></div>
           <div class="details-item"><div class="label">End Time</div><div class="value">${proc.end_time || 'N/A'}</div></div>
-          <div class="details-item"><div class="label">Duration</div><div class="value">${formatDuration(proc.duration_s || 0)}</div></div>
-          <div class="details-item"><div class="label">CPU User</div><div class="value">${formatDuration(proc.cpu_user_s || 0)}</div></div>
-          <div class="details-item"><div class="label">CPU System</div><div class="value">${formatDuration(proc.cpu_system_s || 0)}</div></div>
-          <div class="details-item"><div class="label">I/O Read</div><div class="value">${formatBytes(proc.io_read_bytes || 0)}</div></div>
-          <div class="details-item"><div class="label">I/O Write</div><div class="value">${formatBytes(proc.io_write_bytes || 0)}</div></div>
-          <div class="details-item"><div class="label">Working Set</div><div class="value">${formatBytes(proc.working_set_bytes || 0)}</div></div>
-          <div class="details-item"><div class="label">Private Bytes</div><div class="value">${formatBytes(proc.private_bytes || 0)}</div></div>
+          <div class="details-item"><div class="label">Duration</div><div class="value">${displayDuration(proc.duration_s)}</div></div>
+          <div class="details-item"><div class="label">CPU User</div><div class="value">${displayDuration(proc.cpu_user_s)}</div></div>
+          <div class="details-item"><div class="label">CPU System</div><div class="value">${displayDuration(proc.cpu_system_s)}</div></div>
+          <div class="details-item"><div class="label">I/O Read</div><div class="value">${displayBytes(proc.io_read_bytes)}</div></div>
+          <div class="details-item"><div class="label">I/O Write</div><div class="value">${displayBytes(proc.io_write_bytes)}</div></div>
+          <div class="details-item"><div class="label">Working Set</div><div class="value">${displayBytes(proc.working_set_bytes)}</div></div>
+          <div class="details-item"><div class="label">Private Bytes</div><div class="value">${displayBytes(proc.private_bytes)}</div></div>
           <div class="details-item"><div class="label">Executable</div><div class="value">${proc.exe || 'N/A'}</div></div>
         </div>
         <div class="details-section">
@@ -702,21 +795,8 @@
 
     document.getElementById('closeDetails').addEventListener('click', () => {
       detailsPanel.classList.add('hidden');
+      selectedProcPid = null; // Clear selection for state saving
     });
-
-    async function loadFromPath(path) {
-      const container = document.getElementById('flamegraph');
-      container.innerHTML = '<div class="loading">Loading...</div>';
-      
-      try {
-        const response = await fetch(path);
-        if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        const data = await response.json();
-        render(data);
-      } catch (err) {
-        container.innerHTML = `<div class="error">Failed to load: ${err.message}</div>`;
-      }
-    }
 
     function loadFromFile(file) {
       const container = document.getElementById('flamegraph');
@@ -726,7 +806,9 @@
       reader.onload = (e) => {
         try {
           const data = JSON.parse(e.target.result);
+          currentData = data;
           render(data);
+          updateDropZoneState();
         } catch (err) {
           container.innerHTML = `<div class="error">Failed to parse JSON: ${err.message}</div>`;
         }
@@ -738,20 +820,24 @@
     }
 
     // Event listeners
-    document.getElementById('loadBtn').addEventListener('click', () => {
-      loadFromPath(document.getElementById('jsonPath').value);
-    });
-    
-    document.getElementById('jsonPath').addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') loadFromPath(document.getElementById('jsonPath').value);
-    });
-
     document.getElementById('colorMode').addEventListener('change', () => {
       if (currentData) render(currentData);
     });
 
     // Drag and drop
     const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const saveBtn = document.getElementById('saveBtn');
+    const dataStatus = document.getElementById('dataStatus');
+    
+    dropZone.addEventListener('click', () => {
+      if (!currentData) fileInput.click();
+    });
+    
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) loadFromFile(file);
+    });
     
     dropZone.addEventListener('dragover', (e) => {
       e.preventDefault();
@@ -771,7 +857,98 @@
       }
     });
 
-    // No auto-load - user clicks Load button
+    function updateDropZoneState() {
+      if (currentData) {
+        dropZone.classList.add('has-data');
+        dropZone.innerHTML = `<span style="color: var(--accent);">✓ Data loaded</span> — ${currentData.processes.length} processes`;
+        saveBtn.disabled = false;
+        dataStatus.textContent = '';
+        dataStatus.classList.add('loaded');
+      }
+    }
+
+    // Save HTML with embedded data
+    saveBtn.addEventListener('click', () => {
+      if (!currentData) return;
+      
+      const colorMode = document.getElementById('colorMode').value;
+      
+      // Build the saved HTML with embedded data
+      const savedHtml = generateSavedHtml(currentData, colorMode, selectedProcPid);
+      
+      // Download
+      const blob = new Blob([savedHtml], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `flamegraph-${new Date().toISOString().slice(0,10)}.html`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+
+    function generateSavedHtml(data, colorMode, selectedPid) {
+      // Get the current HTML structure
+      const doctype = '<!DOCTYPE html>';
+      const htmlStart = document.documentElement.outerHTML;
+      
+      // Create a clean version with embedded data
+      const embeddedDataScript = `
+    // Embedded data - auto-generated
+    const EMBEDDED_DATA = ${JSON.stringify(data)};
+    const EMBEDDED_COLOR_MODE = ${JSON.stringify(colorMode)};
+    const EMBEDDED_SELECTED_PID = ${JSON.stringify(selectedPid)};
+`;
+      
+      // Find the script section and inject embedded data
+      let html = htmlStart;
+      
+      // Replace the script section to include embedded data and auto-load
+      const scriptStartMarker = '<script>';
+      const autoLoadCode = `
+
+    // Auto-load embedded data on page load
+    if (typeof EMBEDDED_DATA !== 'undefined' && EMBEDDED_DATA) {
+      document.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('colorMode').value = EMBEDDED_COLOR_MODE || 'type';
+        currentData = EMBEDDED_DATA;
+        render(currentData);
+        updateDropZoneState();
+        
+        // Restore selected process details
+        if (EMBEDDED_SELECTED_PID) {
+          const proc = currentData.processes.find(p => p.pid === EMBEDDED_SELECTED_PID);
+          if (proc) showDetails(proc);
+        }
+      });
+    }
+
+    // No auto-load - user drops file or clicks to browse`;
+      
+      // Insert embedded data at the start of script
+      const scriptPos = html.indexOf(scriptStartMarker);
+      if (scriptPos !== -1) {
+        const insertPos = scriptPos + scriptStartMarker.length;
+        html = html.slice(0, insertPos) + embeddedDataScript + html.slice(insertPos);
+      }
+      
+      // Replace the "No auto-load" comment with auto-load code
+      html = html.replace(
+        /\/\/ No auto-load - user drops file or clicks to browse/g,
+        autoLoadCode
+      );
+      
+      // Also handle original files that might have different comment
+      html = html.replace(
+        /\/\/ No auto-load - user clicks Load button/g, 
+        autoLoadCode
+      );
+      
+      return doctype + '\n' + html;
+    }
+
+    // No auto-load - user drops file or clicks to browse
   </script>
 </body>
 </html>

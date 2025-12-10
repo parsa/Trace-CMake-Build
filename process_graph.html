@@ -1,0 +1,1147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Process Dependency Graph</title>
+  <style>
+    :root {
+      --bg: #f8f9fa;
+      --bg-secondary: #ffffff;
+      --text: #24292f;
+      --text-muted: #57606a;
+      --border: #d0d7de;
+      --accent: #0969da;
+      --accent-dim: rgba(9, 105, 218, 0.1);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    .container {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    header {
+      padding: 16px 24px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      flex-shrink: 0;
+    }
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 500;
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    button, select {
+      font-family: inherit;
+      font-size: 0.8rem;
+      padding: 8px 16px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--text);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    button:hover, select:hover {
+      border-color: var(--accent);
+      background: var(--accent-dim);
+    }
+    .stats {
+      margin-left: auto;
+      display: flex;
+      gap: 24px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    .stat-value {
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .graph-container {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }
+    #graph {
+      width: 100%;
+      height: 100%;
+      cursor: grab;
+    }
+    #graph:active {
+      cursor: grabbing;
+    }
+    .zoom-controls {
+      position: absolute;
+      bottom: 24px;
+      right: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      z-index: 20;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+    .zoom-controls button {
+      width: 40px;
+      height: 40px;
+      border: none;
+      border-radius: 0;
+      background: var(--bg-secondary);
+      font-size: 1.2rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+    }
+    .zoom-controls button:hover {
+      background: var(--accent-dim);
+    }
+    .zoom-controls button:first-child {
+      border-bottom: 1px solid var(--border);
+    }
+    .zoom-level {
+      font-size: 0.65rem;
+      text-align: center;
+      padding: 4px;
+      color: var(--text-muted);
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .node {
+      cursor: pointer;
+    }
+    .node rect {
+      fill: var(--bg-secondary);
+      stroke: var(--border);
+      stroke-width: 1.5;
+      rx: 6;
+      transition: all 0.15s;
+    }
+    .node:hover rect {
+      stroke: var(--accent);
+      stroke-width: 2;
+      filter: drop-shadow(0 2px 8px rgba(9, 105, 218, 0.25));
+    }
+    .node.selected rect {
+      stroke: var(--accent);
+      stroke-width: 2.5;
+      fill: var(--accent-dim);
+    }
+    .node text {
+      fill: var(--text);
+      font-size: 11px;
+      font-family: inherit;
+    }
+    .node .pid {
+      fill: var(--text-muted);
+      font-size: 9px;
+    }
+    .node .duration {
+      fill: var(--accent);
+      font-size: 9px;
+    }
+    .edge {
+      fill: none;
+      stroke: var(--border);
+      stroke-width: 1.5;
+    }
+    .edge.highlighted {
+      stroke: var(--accent);
+      stroke-width: 2;
+    }
+    .arrowhead {
+      fill: var(--border);
+    }
+    .arrowhead.highlighted {
+      fill: var(--accent);
+    }
+    .drop-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(248, 249, 250, 0.95);
+      z-index: 100;
+    }
+    .drop-overlay.hidden {
+      display: none;
+    }
+    .drop-box {
+      border: 2px dashed var(--border);
+      border-radius: 12px;
+      padding: 60px 80px;
+      text-align: center;
+      transition: all 0.2s;
+    }
+    .drop-box.drag-over {
+      border-color: var(--accent);
+      background: var(--accent-dim);
+    }
+    .drop-icon {
+      font-size: 3rem;
+      margin-bottom: 16px;
+    }
+    .drop-text {
+      font-size: 1.1rem;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+    .drop-hint {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+    .tooltip {
+      position: fixed;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 0.75rem;
+      max-width: 400px;
+      z-index: 1000;
+      pointer-events: none;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+    .tooltip.hidden {
+      display: none;
+    }
+    .tooltip-title {
+      color: var(--accent);
+      font-weight: 600;
+      margin-bottom: 8px;
+      font-size: 0.85rem;
+    }
+    .tooltip-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 4px;
+    }
+    .tooltip-row .key { color: var(--text-muted); }
+    .tooltip-row .value { color: var(--text); }
+    .tooltip-cmd {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+      color: var(--text-muted);
+      word-break: break-all;
+      font-size: 0.7rem;
+    }
+    .details-panel {
+      position: absolute;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      width: 380px;
+      background: var(--bg-secondary);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.25s ease;
+      z-index: 50;
+    }
+    .details-panel.open {
+      transform: translateX(0);
+    }
+    .details-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .details-header h2 {
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: var(--accent);
+    }
+    .details-header button {
+      background: none;
+      border: none;
+      font-size: 1.2rem;
+      padding: 4px 8px;
+    }
+    .details-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+    }
+    .details-section {
+      margin-bottom: 20px;
+    }
+    .details-section-title {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+    .details-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .details-item {
+      background: var(--bg);
+      padding: 10px 12px;
+      border-radius: 6px;
+    }
+    .details-item.full {
+      grid-column: 1 / -1;
+    }
+    .details-item .label {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      margin-bottom: 4px;
+    }
+    .details-item .value {
+      font-size: 0.8rem;
+      color: var(--text);
+      word-break: break-all;
+    }
+    .details-item .value.accent {
+      color: var(--accent);
+    }
+    .children-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .child-item {
+      background: var(--bg);
+      padding: 8px 12px;
+      border-radius: 6px;
+      display: flex;
+      justify-content: space-between;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .child-item:hover {
+      background: var(--accent-dim);
+    }
+    .child-name {
+      color: var(--text);
+    }
+    .child-pid {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>⬡ Process Dependency Graph</h1>
+      <div class="controls">
+        <button id="loadBtn">📂 Load JSON</button>
+        <button id="resetBtn">↺ Reset View</button>
+        <select id="layoutMode">
+          <option value="sankey">Sankey Diagram</option>
+          <option value="tree">Tree Layout</option>
+          <option value="radial">Radial Layout</option>
+        </select>
+      </div>
+      <div class="stats">
+        <span>Processes: <span class="stat-value" id="statProcesses">0</span></span>
+        <span>Max Depth: <span class="stat-value" id="statDepth">0</span></span>
+        <span>Duration: <span class="stat-value" id="statDuration">-</span></span>
+      </div>
+    </header>
+    
+    <div class="graph-container">
+      <svg id="graph"></svg>
+      
+      <div class="zoom-controls">
+        <button id="zoomIn" title="Zoom in">+</button>
+        <div class="zoom-level" id="zoomLevel">100%</div>
+        <button id="zoomOut" title="Zoom out">−</button>
+      </div>
+      
+      <div class="drop-overlay" id="dropOverlay">
+        <div class="drop-box" id="dropBox">
+          <div class="drop-icon">📊</div>
+          <div class="drop-text">Drop a JSON trace file</div>
+          <div class="drop-hint">or click Load JSON button</div>
+        </div>
+      </div>
+      
+      <div class="details-panel" id="detailsPanel">
+        <div class="details-header">
+          <h2 id="detailsTitle">Process Details</h2>
+          <button id="closeDetails">✕</button>
+        </div>
+        <div class="details-content" id="detailsContent"></div>
+      </div>
+    </div>
+  </div>
+  
+  <div class="tooltip hidden" id="tooltip"></div>
+  <input type="file" id="fileInput" accept=".json" style="display: none;">
+
+  <script>
+    // State
+    let currentData = null;
+    let transform = { x: 0, y: 0, scale: 1 };
+    let selectedNode = null;
+    let nodePositions = new Map();
+
+    // DOM elements
+    const svg = document.getElementById('graph');
+    const dropOverlay = document.getElementById('dropOverlay');
+    const dropBox = document.getElementById('dropBox');
+    const tooltip = document.getElementById('tooltip');
+    const detailsPanel = document.getElementById('detailsPanel');
+    const detailsContent = document.getElementById('detailsContent');
+    const detailsTitle = document.getElementById('detailsTitle');
+    const fileInput = document.getElementById('fileInput');
+
+    // Utilities
+    function formatDuration(s) {
+      if (s == null) return 'N/A';
+      if (s >= 60) return (s / 60).toFixed(2) + ' min';
+      if (s >= 1) return s.toFixed(3) + ' s';
+      return (s * 1000).toFixed(1) + ' ms';
+    }
+
+    function formatBytes(b) {
+      if (b == null) return 'N/A';
+      if (b >= 1e9) return (b / 1e9).toFixed(2) + ' GB';
+      if (b >= 1e6) return (b / 1e6).toFixed(2) + ' MB';
+      if (b >= 1e3) return (b / 1e3).toFixed(2) + ' KB';
+      return b + ' B';
+    }
+
+    // Build tree structure
+    function buildTree(data) {
+      const procMap = new Map(data.processes.map(p => [p.pid, { ...p, children: [] }]));
+      
+      // Find root (has label or no parent in our set)
+      let root = null;
+      for (const p of procMap.values()) {
+        if (p.label) { root = p; break; }
+      }
+      if (!root) {
+        for (const p of procMap.values()) {
+          if (!procMap.has(p.ppid)) { root = p; break; }
+        }
+      }
+
+      // Build tree from edges
+      for (const e of data.edges) {
+        const parent = procMap.get(e.parent);
+        const child = procMap.get(e.child);
+        if (parent && child) {
+          parent.children.push(child);
+        }
+      }
+
+      return { root, procMap };
+    }
+
+    // Calculate tree layout
+    function calculateTreeLayout(root, width, height) {
+      const nodeWidth = 160;
+      const nodeHeight = 56;
+      const levelHeight = 100;
+      const siblingGap = 24;
+      
+      // First pass: calculate subtree widths
+      function getSubtreeWidth(node) {
+        if (!node.children || node.children.length === 0) {
+          return nodeWidth;
+        }
+        let width = 0;
+        for (const child of node.children) {
+          width += getSubtreeWidth(child) + siblingGap;
+        }
+        return Math.max(nodeWidth, width - siblingGap);
+      }
+
+      // Second pass: assign positions
+      function assignPositions(node, x, y, depth = 0) {
+        nodePositions.set(node.pid, { 
+          x, y, 
+          width: nodeWidth, 
+          height: nodeHeight,
+          depth 
+        });
+        
+        if (node.children && node.children.length > 0) {
+          const subtreeWidth = getSubtreeWidth(node);
+          let childX = x - subtreeWidth / 2 + nodeWidth / 2;
+          
+          for (const child of node.children) {
+            const childWidth = getSubtreeWidth(child);
+            assignPositions(child, childX + childWidth / 2 - nodeWidth / 2, y + levelHeight, depth + 1);
+            childX += childWidth + siblingGap;
+          }
+        }
+      }
+
+      nodePositions.clear();
+      const rootSubtreeWidth = getSubtreeWidth(root);
+      assignPositions(root, width / 2 - nodeWidth / 2, 50);
+      
+      // Calculate max depth
+      let maxDepth = 0;
+      for (const pos of nodePositions.values()) {
+        maxDepth = Math.max(maxDepth, pos.depth);
+      }
+      
+      return maxDepth;
+    }
+
+    // Calculate radial layout
+    function calculateRadialLayout(root, width, height) {
+      const nodeWidth = 160;
+      const nodeHeight = 56;
+      const centerX = width / 2;
+      const centerY = height / 2;
+      const radiusStep = 140;
+      
+      // Count nodes at each depth
+      function countByDepth(node, depth = 0, counts = new Map()) {
+        counts.set(depth, (counts.get(depth) || 0) + 1);
+        for (const child of node.children || []) {
+          countByDepth(child, depth + 1, counts);
+        }
+        return counts;
+      }
+
+      // Assign positions
+      function assignPositions(node, startAngle, endAngle, depth = 0) {
+        const angle = (startAngle + endAngle) / 2;
+        const radius = depth * radiusStep;
+        
+        const x = centerX + radius * Math.cos(angle) - nodeWidth / 2;
+        const y = centerY + radius * Math.sin(angle) - nodeHeight / 2;
+        
+        nodePositions.set(node.pid, { 
+          x, y, 
+          width: nodeWidth, 
+          height: nodeHeight,
+          depth 
+        });
+        
+        const children = node.children || [];
+        if (children.length > 0) {
+          const angleStep = (endAngle - startAngle) / children.length;
+          children.forEach((child, i) => {
+            assignPositions(child, startAngle + i * angleStep, startAngle + (i + 1) * angleStep, depth + 1);
+          });
+        }
+      }
+
+      nodePositions.clear();
+      assignPositions(root, 0, 2 * Math.PI);
+      
+      let maxDepth = 0;
+      for (const pos of nodePositions.values()) {
+        maxDepth = Math.max(maxDepth, pos.depth);
+      }
+      
+      return maxDepth;
+    }
+
+    // Calculate Sankey-style layout (horizontal flow, left to right)
+    function calculateSankeyLayout(root, width, height) {
+      const nodeWidth = 160;
+      const nodeHeight = 56;
+      const columnGap = 220;
+      const nodeGap = 20;
+      const startX = 60;
+      const startY = 60;
+      
+      // Group nodes by depth
+      const depthGroups = new Map();
+      
+      function collectByDepth(node, depth = 0) {
+        if (!depthGroups.has(depth)) depthGroups.set(depth, []);
+        depthGroups.get(depth).push(node);
+        for (const child of node.children || []) {
+          collectByDepth(child, depth + 1);
+        }
+      }
+      collectByDepth(root);
+      
+      // Sort each depth group by parent position (to minimize edge crossings)
+      const sortedDepths = [...depthGroups.keys()].sort((a, b) => a - b);
+      
+      nodePositions.clear();
+      let maxDepth = 0;
+      
+      for (const depth of sortedDepths) {
+        maxDepth = Math.max(maxDepth, depth);
+        const nodes = depthGroups.get(depth);
+        
+        // Sort by parent's Y position if we have positions for parents
+        nodes.sort((a, b) => {
+          const parentPosA = nodePositions.get(a.ppid);
+          const parentPosB = nodePositions.get(b.ppid);
+          if (parentPosA && parentPosB) {
+            return parentPosA.y - parentPosB.y;
+          }
+          return 0;
+        });
+        
+        // Calculate total height needed
+        const totalHeight = nodes.length * nodeHeight + (nodes.length - 1) * nodeGap;
+        let y = startY;
+        
+        // If we have parent positions, try to center children under parent
+        if (depth > 0) {
+          // Group by parent
+          const byParent = new Map();
+          for (const node of nodes) {
+            if (!byParent.has(node.ppid)) byParent.set(node.ppid, []);
+            byParent.get(node.ppid).push(node);
+          }
+          
+          // Position each group centered on parent
+          for (const [ppid, children] of byParent) {
+            const parentPos = nodePositions.get(ppid);
+            const groupHeight = children.length * nodeHeight + (children.length - 1) * nodeGap;
+            let groupY = parentPos ? parentPos.y + (parentPos.height - groupHeight) / 2 : y;
+            groupY = Math.max(startY, groupY);
+            
+            for (const node of children) {
+              nodePositions.set(node.pid, {
+                x: startX + depth * columnGap,
+                y: groupY,
+                width: nodeWidth,
+                height: nodeHeight,
+                depth
+              });
+              groupY += nodeHeight + nodeGap;
+            }
+          }
+        } else {
+          // Root node
+          for (const node of nodes) {
+            nodePositions.set(node.pid, {
+              x: startX + depth * columnGap,
+              y: y,
+              width: nodeWidth,
+              height: nodeHeight,
+              depth
+            });
+            y += nodeHeight + nodeGap;
+          }
+        }
+      }
+      
+      // Resolve overlaps by pushing nodes down
+      for (const depth of sortedDepths) {
+        const nodes = depthGroups.get(depth);
+        const positions = nodes.map(n => nodePositions.get(n.pid)).filter(Boolean);
+        positions.sort((a, b) => a.y - b.y);
+        
+        for (let i = 1; i < positions.length; i++) {
+          const prev = positions[i - 1];
+          const curr = positions[i];
+          const minY = prev.y + prev.height + nodeGap;
+          if (curr.y < minY) {
+            curr.y = minY;
+          }
+        }
+      }
+      
+      return maxDepth;
+    }
+
+    // Color palette matching flamegraph.html
+    const colorPalette = [
+      '#ef5350', '#ec407a', '#ab47bc', '#7e57c2', '#5c6bc0',
+      '#42a5f5', '#29b6f6', '#26c6da', '#26a69a', '#66bb6a',
+      '#9ccc65', '#d4e157', '#ffee58', '#ffca28', '#ffa726',
+      '#ff7043', '#8d6e63', '#78909c', '#4fc3f7', '#4db6ac',
+    ];
+
+    function hashString(str) {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) - hash) + str.charCodeAt(i);
+        hash |= 0;
+      }
+      return Math.abs(hash);
+    }
+
+    function normalizeProcessName(name) {
+      return (name || 'unknown').toLowerCase().replace(/\.exe$/i, '');
+    }
+
+    // Color based on process name (consistent with flamegraph)
+    function getNodeColor(proc) {
+      const normalized = normalizeProcessName(proc.name);
+      const index = hashString(normalized) % colorPalette.length;
+      return colorPalette[index];
+    }
+
+    // Render the graph
+    function render(data) {
+      currentData = data;
+      const { root, procMap } = buildTree(data);
+      
+      if (!root) {
+        svg.innerHTML = '<text x="50%" y="50%" text-anchor="middle" fill="#8892a0">No root process found</text>';
+        return;
+      }
+
+      const rect = svg.getBoundingClientRect();
+      const width = rect.width || 1200;
+      const height = rect.height || 800;
+      
+      // Calculate layout
+      const layoutMode = document.getElementById('layoutMode').value;
+      let maxDepth;
+      if (layoutMode === 'tree') {
+        maxDepth = calculateTreeLayout(root, width, height);
+      } else if (layoutMode === 'radial') {
+        maxDepth = calculateRadialLayout(root, width, height);
+      } else {
+        // Default to Sankey Diagram
+        maxDepth = calculateSankeyLayout(root, width, height);
+      }
+
+      // Update stats
+      document.getElementById('statProcesses').textContent = data.processes.length;
+      document.getElementById('statDepth').textContent = maxDepth;
+      
+      const durations = data.processes.map(p => p.duration_s).filter(d => d != null);
+      const totalDur = durations.reduce((a, b) => a + b, 0);
+      document.getElementById('statDuration').textContent = formatDuration(totalDur);
+
+      // Calculate bounds for centering
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const pos of nodePositions.values()) {
+        minX = Math.min(minX, pos.x);
+        maxX = Math.max(maxX, pos.x + pos.width);
+        minY = Math.min(minY, pos.y);
+        maxY = Math.max(maxY, pos.y + pos.height);
+      }
+      
+      // Center the graph
+      const graphWidth = maxX - minX;
+      const graphHeight = maxY - minY;
+      const scale = Math.min(1, (width - 100) / graphWidth, (height - 100) / graphHeight);
+      transform.scale = scale;
+      transform.x = (width - graphWidth * scale) / 2 - minX * scale;
+      transform.y = (height - graphHeight * scale) / 2 - minY * scale;
+
+      // Build SVG
+      let svgContent = `
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="arrowhead" />
+          </marker>
+          <marker id="arrowhead-hl" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="arrowhead highlighted" />
+          </marker>
+        </defs>
+        <g id="viewport" transform="translate(${transform.x}, ${transform.y}) scale(${transform.scale})">
+      `;
+
+      // Draw edges
+      for (const e of data.edges) {
+        const parentPos = nodePositions.get(e.parent);
+        const childPos = nodePositions.get(e.child);
+        if (parentPos && childPos) {
+          let pathD;
+          
+          if (layoutMode === 'sankey') {
+            // Horizontal flow: right side of parent to left side of child
+            const x1 = parentPos.x + parentPos.width;
+            const y1 = parentPos.y + parentPos.height / 2;
+            const x2 = childPos.x;
+            const y2 = childPos.y + childPos.height / 2;
+            const midX = (x1 + x2) / 2;
+            pathD = `M${x1},${y1} C${midX},${y1} ${midX},${y2} ${x2},${y2}`;
+          } else {
+            // Vertical flow: bottom of parent to top of child
+            const x1 = parentPos.x + parentPos.width / 2;
+            const y1 = parentPos.y + parentPos.height;
+            const x2 = childPos.x + childPos.width / 2;
+            const y2 = childPos.y;
+            const midY = (y1 + y2) / 2;
+            pathD = `M${x1},${y1} C${x1},${midY} ${x2},${midY} ${x2},${y2}`;
+          }
+          
+          svgContent += `<path class="edge" d="${pathD}" 
+            marker-end="url(#arrowhead)" data-parent="${e.parent}" data-child="${e.child}" />`;
+        }
+      }
+
+      // Draw nodes
+      for (const proc of data.processes) {
+        const pos = nodePositions.get(proc.pid);
+        if (!pos) continue;
+        
+        const name = (proc.name || 'unknown').replace('.exe', '');
+        const displayName = name.length > 16 ? name.slice(0, 14) + '…' : name;
+        const dur = formatDuration(proc.duration_s);
+        const color = getNodeColor(proc);
+        
+        svgContent += `
+          <g class="node" data-pid="${proc.pid}" transform="translate(${pos.x}, ${pos.y})">
+            <rect width="${pos.width}" height="${pos.height}" style="stroke: ${color};" />
+            <text x="${pos.width/2}" y="20" text-anchor="middle">${displayName}</text>
+            <text x="${pos.width/2}" y="35" text-anchor="middle" class="pid">PID ${proc.pid}</text>
+            <text x="${pos.width/2}" y="50" text-anchor="middle" class="duration">${dur}</text>
+          </g>
+        `;
+      }
+
+      svgContent += '</g>';
+      svg.innerHTML = svgContent;
+
+      // Bind node events
+      svg.querySelectorAll('.node').forEach(node => {
+        const pid = parseInt(node.dataset.pid);
+        const proc = procMap.get(pid);
+        
+        node.addEventListener('mouseenter', (e) => showTooltip(e, proc));
+        node.addEventListener('mousemove', moveTooltip);
+        node.addEventListener('mouseleave', hideTooltip);
+        node.addEventListener('click', () => selectNode(proc, procMap));
+      });
+
+      // Update bounds for pan constraints
+      updateGraphBounds();
+      
+      // Hide drop overlay
+      dropOverlay.classList.add('hidden');
+      
+      // Update zoom level display
+      document.getElementById('zoomLevel').textContent = Math.round(transform.scale * 100) + '%';
+    }
+
+    // Tooltip
+    function showTooltip(e, proc) {
+      const cmdline = (proc.cmdline || []).join(' ');
+      tooltip.innerHTML = `
+        <div class="tooltip-title">${proc.name} (PID ${proc.pid})</div>
+        <div class="tooltip-row"><span class="key">Duration</span><span class="value">${formatDuration(proc.duration_s)}</span></div>
+        <div class="tooltip-row"><span class="key">CPU</span><span class="value">${formatDuration((proc.cpu_user_s || 0) + (proc.cpu_system_s || 0))}</span></div>
+        <div class="tooltip-row"><span class="key">Children</span><span class="value">${proc.children?.length || 0}</span></div>
+        <div class="tooltip-cmd">${cmdline.length > 150 ? cmdline.slice(0, 150) + '…' : cmdline}</div>
+      `;
+      tooltip.classList.remove('hidden');
+      moveTooltip(e);
+    }
+
+    function moveTooltip(e) {
+      const x = Math.min(e.clientX + 12, window.innerWidth - tooltip.offsetWidth - 16);
+      const y = Math.min(e.clientY + 12, window.innerHeight - tooltip.offsetHeight - 16);
+      tooltip.style.left = x + 'px';
+      tooltip.style.top = y + 'px';
+    }
+
+    function hideTooltip() {
+      tooltip.classList.add('hidden');
+    }
+
+    // Selection & details panel
+    function selectNode(proc, procMap) {
+      // Update selection visual
+      svg.querySelectorAll('.node.selected').forEach(n => n.classList.remove('selected'));
+      svg.querySelector(`.node[data-pid="${proc.pid}"]`)?.classList.add('selected');
+      
+      // Highlight edges
+      svg.querySelectorAll('.edge').forEach(e => {
+        const isConnected = parseInt(e.dataset.parent) === proc.pid || parseInt(e.dataset.child) === proc.pid;
+        e.classList.toggle('highlighted', isConnected);
+        e.setAttribute('marker-end', isConnected ? 'url(#arrowhead-hl)' : 'url(#arrowhead)');
+      });
+
+      selectedNode = proc;
+      detailsTitle.textContent = `${proc.name} (PID ${proc.pid})`;
+      
+      const parent = procMap.get(proc.ppid);
+      const childrenHtml = proc.children?.length > 0 
+        ? `<div class="children-list">
+            ${proc.children.map(c => `
+              <div class="child-item" data-pid="${c.pid}">
+                <span class="child-name">${c.name}</span>
+                <span class="child-pid">PID ${c.pid}</span>
+              </div>
+            `).join('')}
+           </div>`
+        : '<div style="color: var(--text-muted)">No children</div>';
+
+      detailsContent.innerHTML = `
+        <div class="details-section">
+          <div class="details-section-title">Timing</div>
+          <div class="details-grid">
+            <div class="details-item">
+              <div class="label">Duration</div>
+              <div class="value accent">${formatDuration(proc.duration_s)}</div>
+            </div>
+            <div class="details-item">
+              <div class="label">CPU Time</div>
+              <div class="value">${formatDuration((proc.cpu_user_s || 0) + (proc.cpu_system_s || 0))}</div>
+            </div>
+            <div class="details-item">
+              <div class="label">Start</div>
+              <div class="value">${proc.start_time?.split('T')[1]?.slice(0,12) || 'N/A'}</div>
+            </div>
+            <div class="details-item">
+              <div class="label">End</div>
+              <div class="value">${proc.end_time?.split('T')[1]?.slice(0,12) || 'N/A'}</div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="details-section">
+          <div class="details-section-title">Resources</div>
+          <div class="details-grid">
+            <div class="details-item">
+              <div class="label">I/O Read</div>
+              <div class="value">${formatBytes(proc.io_read_bytes)}</div>
+            </div>
+            <div class="details-item">
+              <div class="label">I/O Write</div>
+              <div class="value">${formatBytes(proc.io_write_bytes)}</div>
+            </div>
+            <div class="details-item">
+              <div class="label">Memory</div>
+              <div class="value">${formatBytes(proc.working_set_bytes)}</div>
+            </div>
+            <div class="details-item">
+              <div class="label">Private</div>
+              <div class="value">${formatBytes(proc.private_bytes)}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="details-section">
+          <div class="details-section-title">Hierarchy</div>
+          <div class="details-grid">
+            <div class="details-item">
+              <div class="label">Parent</div>
+              <div class="value">${parent ? `${parent.name} (${proc.ppid})` : 'None'}</div>
+            </div>
+            <div class="details-item">
+              <div class="label">Children</div>
+              <div class="value">${proc.children?.length || 0}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="details-section">
+          <div class="details-section-title">Children</div>
+          ${childrenHtml}
+        </div>
+
+        <div class="details-section">
+          <div class="details-section-title">Command Line</div>
+          <div class="details-item full">
+            <div class="value" style="font-size: 0.7rem; white-space: pre-wrap;">${(proc.cmdline || []).join(' ') || 'N/A'}</div>
+          </div>
+        </div>
+
+        <div class="details-section">
+          <div class="details-section-title">Executable</div>
+          <div class="details-item full">
+            <div class="value" style="font-size: 0.7rem;">${proc.exe || 'N/A'}</div>
+          </div>
+        </div>
+      `;
+
+      // Bind child click events
+      detailsContent.querySelectorAll('.child-item').forEach(item => {
+        item.addEventListener('click', () => {
+          const childProc = procMap.get(parseInt(item.dataset.pid));
+          if (childProc) selectNode(childProc, procMap);
+        });
+      });
+
+      detailsPanel.classList.add('open');
+    }
+
+    // Close details
+    document.getElementById('closeDetails').addEventListener('click', () => {
+      detailsPanel.classList.remove('open');
+      svg.querySelectorAll('.node.selected').forEach(n => n.classList.remove('selected'));
+      svg.querySelectorAll('.edge.highlighted').forEach(e => {
+        e.classList.remove('highlighted');
+        e.setAttribute('marker-end', 'url(#arrowhead)');
+      });
+      selectedNode = null;
+    });
+
+    // Pan & zoom
+    let isPanning = false;
+    let panStart = { x: 0, y: 0 };
+    let graphBounds = { minX: 0, maxX: 0, minY: 0, maxY: 0 };
+
+    // Calculate graph bounds for constraining pan
+    function updateGraphBounds() {
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const pos of nodePositions.values()) {
+        minX = Math.min(minX, pos.x);
+        maxX = Math.max(maxX, pos.x + pos.width);
+        minY = Math.min(minY, pos.y);
+        maxY = Math.max(maxY, pos.y + pos.height);
+      }
+      graphBounds = { minX, maxX, minY, maxY };
+    }
+
+    // Constrain panning so graph stays partially visible
+    function constrainPan() {
+      const rect = svg.getBoundingClientRect();
+      const margin = 100; // Keep at least this much of graph visible
+      
+      const scaledWidth = (graphBounds.maxX - graphBounds.minX) * transform.scale;
+      const scaledHeight = (graphBounds.maxY - graphBounds.minY) * transform.scale;
+      
+      // Right edge of graph shouldn't go past left edge of viewport (with margin)
+      const minX = margin - (graphBounds.maxX * transform.scale);
+      // Left edge of graph shouldn't go past right edge of viewport (with margin)
+      const maxX = rect.width - margin - (graphBounds.minX * transform.scale);
+      
+      // Same for Y
+      const minY = margin - (graphBounds.maxY * transform.scale);
+      const maxY = rect.height - margin - (graphBounds.minY * transform.scale);
+      
+      transform.x = Math.max(minX, Math.min(maxX, transform.x));
+      transform.y = Math.max(minY, Math.min(maxY, transform.y));
+    }
+
+    svg.addEventListener('mousedown', (e) => {
+      if (e.target === svg || e.target.tagName === 'path') {
+        isPanning = true;
+        panStart = { x: e.clientX - transform.x, y: e.clientY - transform.y };
+      }
+    });
+
+    svg.addEventListener('mousemove', (e) => {
+      if (isPanning) {
+        transform.x = e.clientX - panStart.x;
+        transform.y = e.clientY - panStart.y;
+        constrainPan();
+        updateTransform();
+      }
+    });
+
+    svg.addEventListener('mouseup', () => isPanning = false);
+    svg.addEventListener('mouseleave', () => isPanning = false);
+
+    function zoomAtCenter(delta) {
+      const rect = svg.getBoundingClientRect();
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+      
+      transform.x = centerX - (centerX - transform.x) * delta;
+      transform.y = centerY - (centerY - transform.y) * delta;
+      transform.scale *= delta;
+      transform.scale = Math.max(0.1, Math.min(5, transform.scale));
+      
+      constrainPan();
+      updateTransform();
+    }
+
+    svg.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      const rect = svg.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      
+      transform.x = mouseX - (mouseX - transform.x) * delta;
+      transform.y = mouseY - (mouseY - transform.y) * delta;
+      transform.scale *= delta;
+      transform.scale = Math.max(0.1, Math.min(5, transform.scale));
+      
+      constrainPan();
+      updateTransform();
+    });
+
+    // Zoom buttons
+    document.getElementById('zoomIn').addEventListener('click', () => zoomAtCenter(1.25));
+    document.getElementById('zoomOut').addEventListener('click', () => zoomAtCenter(0.8));
+
+    function updateTransform() {
+      const viewport = document.getElementById('viewport');
+      if (viewport) {
+        viewport.setAttribute('transform', `translate(${transform.x}, ${transform.y}) scale(${transform.scale})`);
+      }
+      // Update zoom level display
+      document.getElementById('zoomLevel').textContent = Math.round(transform.scale * 100) + '%';
+    }
+
+    // Reset view
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      if (currentData) render(currentData);
+    });
+
+    // Layout mode change
+    document.getElementById('layoutMode').addEventListener('change', () => {
+      if (currentData) render(currentData);
+    });
+
+    // File loading
+    function loadFile(file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = JSON.parse(e.target.result);
+          render(data);
+        } catch (err) {
+          alert('Failed to parse JSON: ' + err.message);
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    document.getElementById('loadBtn').addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files[0]) loadFile(e.target.files[0]);
+    });
+
+    // Drag & drop
+    dropBox.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropBox.classList.add('drag-over');
+    });
+    dropBox.addEventListener('dragleave', () => dropBox.classList.remove('drag-over'));
+    dropBox.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropBox.classList.remove('drag-over');
+      const file = e.dataTransfer.files[0];
+      if (file?.name.endsWith('.json')) loadFile(file);
+    });
+
+    // Window resize
+    window.addEventListener('resize', () => {
+      if (currentData) render(currentData);
+    });
+  </script>
+</body>
+</html>
+

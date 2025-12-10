@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 """
-Trace any command on Windows and emit a process graph JSON.
+Trace any command and emit a process graph JSON.
 
-Usage (PowerShell, after activating lenovo_trans and VS env):
-  python tools/trace_cmake_build.py --output trace.json -- cmake --build . --config Release
+Works on Windows, macOS, and Linux (via psutil).
+
+Usage:
+  python trace_cmake_build.py --output trace.json -- cmake --build . --config Release
 """
 import argparse
 import datetime as dt
@@ -148,8 +150,21 @@ class ProcessTracer:
                 return False
 
             cpu = proc.cpu_times()
-            mem = proc.memory_full_info()
-            io = proc.io_counters()
+            
+            # memory_full_info may fail or have different fields on different OSes
+            try:
+                mem = proc.memory_full_info()
+            except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+                try:
+                    mem = proc.memory_info()  # fallback to basic memory info
+                except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+                    mem = None
+            
+            # io_counters() may not be available on all platforms (e.g. macOS without root)
+            try:
+                io = proc.io_counters()
+            except (psutil.NoSuchProcess, psutil.AccessDenied, OSError, AttributeError):
+                io = None
             
             # Get cwd and environ (can fail on some processes)
             try:
@@ -165,13 +180,24 @@ class ProcessTracer:
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             return False
 
-        # Extract memory stats with Windows-specific peak values
-        private_bytes = getattr(mem, "private", None)
-        working_set_bytes = mem.rss
-        peak_working_set_bytes = getattr(mem, "peak_wset", None)
-        num_page_faults = getattr(mem, "num_page_faults", None)
-        # Windows doesn't have peak_private directly; use peak_pagefile as approximation
-        peak_private_bytes = getattr(mem, "peak_pagefile", None)
+        # Extract memory stats (fields vary by OS)
+        if mem is not None:
+            private_bytes = getattr(mem, "private", None)
+            working_set_bytes = getattr(mem, "rss", None)
+            peak_working_set_bytes = getattr(mem, "peak_wset", None)  # Windows-specific
+            num_page_faults = getattr(mem, "num_page_faults", None)  # Windows-specific
+            # Windows doesn't have peak_private directly; use peak_pagefile as approximation
+            peak_private_bytes = getattr(mem, "peak_pagefile", None)  # Windows-specific
+        else:
+            private_bytes = working_set_bytes = peak_working_set_bytes = None
+            num_page_faults = peak_private_bytes = None
+        
+        # Extract I/O stats (may not be available on all platforms)
+        if io is not None:
+            io_read_bytes = io.read_bytes
+            io_write_bytes = io.write_bytes
+        else:
+            io_read_bytes = io_write_bytes = None
 
         if pid not in self.processes:
             meta = get_file_strings(pinfo.get("exe") or "")
@@ -192,8 +218,8 @@ class ProcessTracer:
                 "end_time": None,
                 "cpu_user_s": cpu.user,
                 "cpu_system_s": cpu.system,
-                "io_read_bytes": io.read_bytes,
-                "io_write_bytes": io.write_bytes,
+                "io_read_bytes": io_read_bytes,
+                "io_write_bytes": io_write_bytes,
                 "private_bytes": private_bytes,
                 "peak_private_bytes": peak_private_bytes,
                 "working_set_bytes": working_set_bytes,
@@ -218,10 +244,14 @@ class ProcessTracer:
                 rec["environ"] = environ
             rec["cpu_user_s"] = cpu.user
             rec["cpu_system_s"] = cpu.system
-            rec["io_read_bytes"] = io.read_bytes
-            rec["io_write_bytes"] = io.write_bytes
-            rec["private_bytes"] = private_bytes or rec.get("private_bytes")
-            rec["working_set_bytes"] = working_set_bytes
+            if io_read_bytes is not None:
+                rec["io_read_bytes"] = io_read_bytes
+            if io_write_bytes is not None:
+                rec["io_write_bytes"] = io_write_bytes
+            if private_bytes is not None:
+                rec["private_bytes"] = private_bytes
+            if working_set_bytes is not None:
+                rec["working_set_bytes"] = working_set_bytes
             # Update peak values (keep the max seen)
             if peak_private_bytes is not None:
                 rec["peak_private_bytes"] = max(
@@ -376,7 +406,7 @@ class ProcessTracer:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Trace any command's process tree on Windows.")
+    ap = argparse.ArgumentParser(description="Trace any command's process tree (cross-platform).")
     ap.add_argument("--output", default="processes.json", help="Output JSON file")
     ap.add_argument("--poll-interval", type=float, default=0.01, help="Polling interval seconds")
     ap.add_argument("--post-exit-timeout", type=float, default=5.0,
