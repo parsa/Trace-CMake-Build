@@ -73,13 +73,36 @@ jobs:
           
           mkdir build
 
-      - name: Trace CMake configure and build
-        shell: bash
+      - name: Trace CMake configure
+        working-directory: test_project/build
         run: |
-          python trace_cmake_build.py \
-            --output trace.json \
-            --label "gtest-build" \
-            -- bash -c 'cd test_project/build && cmake .. && cmake --build . --config Release'
+          python ../../trace_cmake_build.py --output ../../trace_configure.json --label "cmake-configure" -- cmake ..
+
+      - name: Trace CMake build
+        working-directory: test_project/build
+        run: |
+          python ../../trace_cmake_build.py --output ../../trace_build.json --label "cmake-build" -- cmake --build . --config Release
+
+      - name: Merge traces
+        shell: python
+        run: |
+          import json
+          
+          with open('trace_configure.json') as f:
+              cfg = json.load(f)
+          with open('trace_build.json') as f:
+              bld = json.load(f)
+          
+          # Merge processes and edges
+          merged = {
+              'processes': cfg['processes'] + bld['processes'],
+              'edges': cfg['edges'] + bld['edges']
+          }
+          
+          with open('trace.json', 'w') as f:
+              json.dump(merged, f, indent=2)
+          
+          print(f"Merged {len(cfg['processes'])} + {len(bld['processes'])} = {len(merged['processes'])} processes")
 
       - name: Validate trace output
         shell: python
