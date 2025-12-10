@@ -43,7 +43,7 @@ jobs:
         run: python merge_traces.py trace_configure.json trace_build.json -o trace.json
 
       - name: Validate trace output
-        run: python validate_trace.py trace.json -e cmake:5 -e "cl|clang|cc|c\+\+":5
+        run: python validate_trace.py trace.json -e cmake:5 -e "cl|clang|cc|c\+\+:5"
 
       - name: Run traced tests
         working-directory: examples/gtest_project/build
