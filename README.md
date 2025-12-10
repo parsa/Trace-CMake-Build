@@ -127,16 +127,16 @@ Combines multiple trace files into one (e.g., separate configure and build trace
 ### validate_trace.py
 
 ```
-python validate_trace.py TRACE.json [-e NAME[:COUNT]] ...
+python validate_trace.py TRACE.json [-e REGEX[:COUNT]] ...
 
 Options:
-  -e, --expect NAME[:COUNT]    Expect at least COUNT (default 1) processes matching NAME
+  -e, --expect REGEX[:COUNT]    Expect at least COUNT (default 1) processes matching REGEX
 ```
 
-Validates trace structure and optionally checks for expected processes:
+Validates trace structure and optionally checks for expected processes (case-insensitive regex):
 
 ```
-python validate_trace.py trace.json -e cmake -e clang:2
+python validate_trace.py trace.json -e cmake -e "cl|clang|gcc|cc":2
 ```
 
 ## Output Format
