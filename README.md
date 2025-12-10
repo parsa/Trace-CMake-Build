@@ -116,6 +116,29 @@ Options:
   --merge            Merge with existing compile_commands.json instead of overwriting
 ```
 
+### merge_traces.py
+
+```
+python merge_traces.py TRACE1.json TRACE2.json ... -o merged.json
+```
+
+Combines multiple trace files into one (e.g., separate configure and build traces).
+
+### validate_trace.py
+
+```
+python validate_trace.py TRACE.json [-e NAME[:COUNT]] ...
+
+Options:
+  -e, --expect NAME[:COUNT]    Expect at least COUNT (default 1) processes matching NAME
+```
+
+Validates trace structure and optionally checks for expected processes:
+
+```
+python validate_trace.py trace.json -e cmake -e clang:2
+```
+
 ## Output Format
 
 The trace JSON contains:

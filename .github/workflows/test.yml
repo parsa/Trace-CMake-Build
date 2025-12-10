@@ -26,133 +26,28 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Create test project
-        shell: bash
-        run: |
-          mkdir -p test_project
-          cd test_project
-          
-          cat > CMakeLists.txt << 'EOF'
-          cmake_minimum_required(VERSION 3.14)
-          project(test_project CXX)
-          
-          set(CMAKE_CXX_STANDARD 17)
-          
-          # Use dynamic CRT on Windows (required for gtest compatibility)
-          set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-          
-          include(FetchContent)
-          FetchContent_Declare(
-            googletest
-            GIT_REPOSITORY https://github.com/google/googletest.git
-            GIT_TAG v1.14.0
-          )
-          FetchContent_MakeAvailable(googletest)
-          
-          add_executable(demo_test test_main.cpp)
-          target_link_libraries(demo_test GTest::gtest_main)
-          
-          enable_testing()
-          add_test(NAME demo_test COMMAND demo_test)
-          EOF
-          
-          cat > test_main.cpp << 'EOF'
-          #include <gtest/gtest.h>
-          
-          int factorial(int n) {
-              return (n <= 1) ? 1 : n * factorial(n - 1);
-          }
-          
-          TEST(FactorialTest, HandlesZero) {
-              EXPECT_EQ(factorial(0), 1);
-          }
-          
-          TEST(FactorialTest, HandlesPositive) {
-              EXPECT_EQ(factorial(1), 1);
-              EXPECT_EQ(factorial(5), 120);
-              EXPECT_EQ(factorial(10), 3628800);
-          }
-          EOF
-          
-          mkdir build
+      - name: Create build directory
+        run: cmake -E make_directory examples/gtest_project/build
 
       - name: Trace CMake configure
-        working-directory: test_project/build
+        working-directory: examples/gtest_project/build
         run: |
-          python ../../trace_cmake_build.py --output ../../trace_configure.json --label "cmake-configure" -- cmake ..
+          python ../../../trace_cmake_build.py --output ../../../trace_configure.json --label "cmake-configure" -- cmake ..
 
       - name: Trace CMake build
-        working-directory: test_project/build
+        working-directory: examples/gtest_project/build
         run: |
-          python ../../trace_cmake_build.py --output ../../trace_build.json --label "cmake-build" -- cmake --build . --config Release
+          python ../../../trace_cmake_build.py --output ../../../trace_build.json --label "cmake-build" -- cmake --build . --config Release
 
       - name: Merge traces
-        shell: python
-        run: |
-          import json
-          
-          with open('trace_configure.json') as f:
-              cfg = json.load(f)
-          with open('trace_build.json') as f:
-              bld = json.load(f)
-          
-          # Merge processes and edges
-          merged = {
-              'processes': cfg['processes'] + bld['processes'],
-              'edges': cfg['edges'] + bld['edges']
-          }
-          
-          with open('trace.json', 'w') as f:
-              json.dump(merged, f, indent=2)
-          
-          print(f"Merged {len(cfg['processes'])} + {len(bld['processes'])} = {len(merged['processes'])} processes")
+        run: python merge_traces.py trace_configure.json trace_build.json -o trace.json
 
       - name: Validate trace output
-        shell: python
-        run: |
-          import json
-          
-          with open('trace.json') as f:
-              data = json.load(f)
-          
-          procs = data['processes']
-          edges = data['edges']
-          
-          print(f'Processes: {len(procs)}')
-          print(f'Edges: {len(edges)}')
-          
-          # Basic validation
-          assert len(procs) > 0, 'No processes captured'
-          assert len(edges) > 0, 'No edges captured'
-          
-          # Check required fields
-          for p in procs:
-              assert 'pid' in p, 'Missing pid'
-              assert 'name' in p, 'Missing name'
-              assert 'cmdline' in p, 'Missing cmdline'
-              assert 'start_time' in p, 'Missing start_time'
-              assert 'end_time' in p, 'Missing end_time'
-              assert 'duration_s' in p, 'Missing duration_s'
-              assert 'cpu_user_s' in p, 'Missing cpu_user_s'
-          
-          # Check for cmake process
-          cmake_procs = [p for p in procs if 'cmake' in (p.get('name') or '').lower()]
-          assert len(cmake_procs) > 0, 'No cmake process found'
-          
-          # Check for compiler process
-          compiler_names = ['clang', 'gcc', 'g++', 'c++', 'cl.exe', 'cc']
-          compiler_procs = [p for p in procs if any(c in (p.get('name') or '').lower() for c in compiler_names)]
-          assert len(compiler_procs) > 0, f'No compiler process found. Names: {[p.get("name") for p in procs]}'
-          
-          print('Trace validation passed!')
-          print(f'Found {len(cmake_procs)} cmake processes')
-          print(f'Found {len(compiler_procs)} compiler processes')
+        run: python validate_trace.py trace.json -e cmake -e cl -e clang -e gcc
 
       - name: Run traced tests
-        shell: bash
-        run: |
-          cd test_project/build
-          ctest --output-on-failure -C Release
+        working-directory: examples/gtest_project/build
+        run: ctest --output-on-failure -C Release
 
       - name: Upload trace artifact
         uses: actions/upload-artifact@v4
