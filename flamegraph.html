@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CMake Build Process Flamegraph</title>
+  <title>Process Tree Visualization</title>
   <style>
     :root {
       --bg: #f8f9fa;
@@ -53,6 +53,10 @@
       border-color: var(--accent);
       outline: none;
     }
+    select option:disabled {
+      color: var(--text-muted);
+      font-style: italic;
+    }
     .stats {
       background: var(--bg-secondary);
       border: 1px solid var(--border);
@@ -82,8 +86,43 @@
       border: 1px solid var(--border);
       border-radius: 8px;
       overflow-x: auto;
+      overflow-y: visible;
       padding: 16px;
+      padding-top: 32px;
       min-height: 200px;
+      position: relative;
+      cursor: grab;
+    }
+    #flamegraph:active {
+      cursor: grabbing;
+    }
+    .timeline-wrapper {
+      position: relative;
+    }
+    .time-axis {
+      position: absolute;
+      top: 0;
+      left: 16px;
+      right: 16px;
+      height: 28px;
+      border-bottom: 1px solid var(--border);
+    }
+    .time-marker {
+      position: absolute;
+      top: 28px;
+      bottom: 0;
+      width: 1px;
+      background: var(--border);
+      opacity: 0.5;
+      pointer-events: none;
+    }
+    .time-label {
+      position: absolute;
+      top: 8px;
+      transform: translateX(-50%);
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      white-space: nowrap;
     }
     .flame-row {
       display: flex;
@@ -276,6 +315,35 @@
       opacity: 0.5;
       cursor: not-allowed;
     }
+    .view-toggle {
+      display: inline-flex;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      margin-right: 8px;
+    }
+    .view-toggle button {
+      border: none;
+      border-radius: 0;
+      background: var(--bg-secondary);
+      padding: 8px 16px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s;
+    }
+    .view-toggle button:not(:last-child) {
+      border-right: 1px solid var(--border);
+    }
+    .view-toggle button:hover {
+      background: var(--bg);
+    }
+    .view-toggle button.active {
+      background: var(--accent);
+      color: white;
+    }
+    .view-toggle button.active:hover {
+      background: #0860ca;
+    }
     .data-status {
       font-size: 0.8rem;
       color: var(--text-muted);
@@ -389,32 +457,171 @@
       color: var(--text-muted);
       max-height: none;
     }
+    .env-details summary {
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .env-details summary::before {
+      content: '▶';
+      font-size: 0.7rem;
+      transition: transform 0.2s;
+    }
+    .env-details[open] summary::before {
+      transform: rotate(90deg);
+    }
+    .env-details summary::-webkit-details-marker {
+      display: none;
+    }
+    .env-list {
+      background: var(--bg);
+      padding: 12px;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      max-height: 600px;
+      overflow-y: auto;
+      margin-top: 12px;
+    }
+    .env-row {
+      padding: 2px 0;
+      word-break: break-all;
+    }
+    .env-key {
+      color: var(--accent);
+      font-weight: 500;
+    }
+    .env-value {
+      color: var(--text-muted);
+    }
+    .env-path-list {
+      display: inline-flex;
+      flex-direction: column;
+      gap: 1px;
+      margin-top: 4px;
+      margin-left: 0px;
+    }
+    .env-path-item {
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      word-break: break-all;
+    }
+    .has-tip {
+      cursor: help;
+      border-bottom: 1px dotted var(--text-muted);
+    }
+    .pid-link {
+      color: var(--accent);
+      text-decoration: none;
+      border-bottom: 1px solid var(--accent);
+      cursor: pointer;
+    }
+    .pid-link:hover {
+      color: #0860ca;
+      border-bottom-color: #0860ca;
+    }
+    .zoom-controls {
+      position: absolute;
+      bottom: 24px;
+      right: 24px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 8px;
+      z-index: 100;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .zoom-controls button {
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      font-size: 1rem;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      background: var(--bg);
+    }
+    .zoom-controls button:hover {
+      background: var(--border);
+    }
+    .zoom-level {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      min-width: 40px;
+      text-align: center;
+    }
+    .zoom-reset {
+      font-size: 0.7rem !important;
+      width: auto !important;
+      padding: 2px 6px !important;
+      margin-left: 4px;
+    }
+    .mini-tooltip {
+      position: fixed;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 0.75rem;
+      z-index: 1001;
+      pointer-events: none;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      white-space: nowrap;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    }
   </style>
 </head>
 <body>
-  <h1>🔥 CMake Build Process Flamegraph</h1>
+  <h1>Process Tree Visualization</h1>
   
   <div class="drop-zone" id="dropZone">
-    <div class="drop-icon">📂</div>
+    <div class="drop-icon"></div>
     <div class="drop-text">Drop a JSON trace file here</div>
     <div class="drop-hint">or click to browse</div>
     <input type="file" id="fileInput" accept=".json" style="display: none;">
   </div>
 
   <div class="controls">
+    <div class="view-toggle">
+      <button id="viewTimeline" class="active">Timeline</button>
+      <button id="viewFlamegraph">Flamegraph</button>
+    </div>
     <label>Color by:</label>
     <select id="colorMode">
-      <option value="type">Process Type</option>
-      <option value="cpu">CPU Time</option>
-      <option value="io">I/O Activity</option>
+      <option value="name">Process Name</option>
+      <option value="duration">Duration</option>
+      <option value="memory">Working Set</option>
+      <option value="private">Private Bytes</option>
+      <option value="peak_memory">Peak Working Set</option>
+      <option value="peak_private">Peak Private</option>
+      <option value="cpu">CPU Time (Total)</option>
+      <option value="cpu_user">CPU Time (User)</option>
+      <option value="cpu_system">CPU Time (System)</option>
+      <option value="io">I/O (Total)</option>
+      <option value="io_read">I/O Read</option>
+      <option value="io_write">I/O Write</option>
+      <option value="page_faults">Page Faults</option>
     </select>
-    <button id="saveBtn" class="save-btn" disabled>💾 Save HTML</button>
+    <button id="saveBtn" class="save-btn" disabled>Save HTML</button>
     <span id="dataStatus" class="data-status"></span>
   </div>
 
   <div class="stats" id="stats"></div>
   
-  <div id="flamegraph"><div class="loading">Drop a JSON file above to visualize</div></div>
+  <div id="flamegraphWrapper" style="position: relative;">
+    <div class="zoom-controls" id="zoomControls">
+      <button id="zoomOut" title="Zoom out">-</button>
+      <span id="zoomLevel" class="zoom-level">100%</span>
+      <button id="zoomIn" title="Zoom in">+</button>
+      <button id="zoomReset" class="zoom-reset" title="Reset zoom">Reset</button>
+    </div>
+    <div id="flamegraph"><div class="loading">Drop a JSON file above to visualize</div></div>
+  </div>
   
   <div class="legend" id="legend"></div>
 
@@ -427,6 +634,7 @@
   </div>
 
   <div class="tooltip hidden" id="tooltip"></div>
+  <div class="mini-tooltip hidden" id="miniTooltip"></div>
 
   <script>
     // Generate consistent colors from process names using hash
@@ -457,29 +665,74 @@
       return colorPalette[index];
     }
 
-    function getColor(proc, mode, maxCpu, maxIo) {
-      if (mode === 'type') {
+    // Gradient helper: green-to-red (for time/faults - higher is "worse")
+    function greenToRed(ratio) {
+      return `rgb(${Math.round(255 * ratio)},${Math.round(200 * (1 - ratio))},50)`;
+    }
+    // Gradient helper: blue-to-purple (for memory - neutral gradient)
+    function blueToPurple(ratio) {
+      return `rgb(${Math.round(100 + 155 * ratio)},${Math.round(150 * (1 - ratio))},${Math.round(200 + 55 * ratio)})`;
+    }
+    // Gradient helper: teal-to-orange (for I/O - neutral gradient)
+    function tealToOrange(ratio) {
+      return `rgb(${Math.round(50 + 205 * ratio)},${Math.round(200 - 100 * ratio)},${Math.round(200 - 200 * ratio)})`;
+    }
+
+    function getColor(proc, mode, maxValues) {
+      if (mode === 'name') {
         return getTypeColor(proc.name);
+      } else if (mode === 'duration') {
+        if (proc.duration_s == null) return '#9e9e9e';
+        const ratio = maxValues.duration > 0 ? proc.duration_s / maxValues.duration : 0;
+        return greenToRed(ratio);
+      } else if (mode === 'memory') {
+        if (proc.working_set_bytes == null) return '#9e9e9e';
+        const ratio = maxValues.memory > 0 ? proc.working_set_bytes / maxValues.memory : 0;
+        return blueToPurple(ratio);
+      } else if (mode === 'private') {
+        if (proc.private_bytes == null) return '#9e9e9e';
+        const ratio = maxValues.private > 0 ? proc.private_bytes / maxValues.private : 0;
+        return blueToPurple(ratio);
+      } else if (mode === 'peak_memory') {
+        if (proc.peak_working_set_bytes == null) return '#9e9e9e';
+        const ratio = maxValues.peak_memory > 0 ? proc.peak_working_set_bytes / maxValues.peak_memory : 0;
+        return blueToPurple(ratio);
+      } else if (mode === 'peak_private') {
+        if (proc.peak_private_bytes == null) return '#9e9e9e';
+        const ratio = maxValues.peak_private > 0 ? proc.peak_private_bytes / maxValues.peak_private : 0;
+        return blueToPurple(ratio);
       } else if (mode === 'cpu') {
+        if (proc.cpu_user_s == null && proc.cpu_system_s == null) return '#9e9e9e';
         const cpu = (proc.cpu_user_s ?? 0) + (proc.cpu_system_s ?? 0);
-        const ratio = maxCpu > 0 ? cpu / maxCpu : 0;
-        const r = Math.round(255 * ratio);
-        const g = Math.round(100 * (1 - ratio));
-        const b = 50;
-        return `rgb(${r},${g},${b})`;
+        const ratio = maxValues.cpu > 0 ? cpu / maxValues.cpu : 0;
+        return greenToRed(ratio);
+      } else if (mode === 'cpu_user') {
+        if (proc.cpu_user_s == null) return '#9e9e9e';
+        const ratio = maxValues.cpu_user > 0 ? proc.cpu_user_s / maxValues.cpu_user : 0;
+        return greenToRed(ratio);
+      } else if (mode === 'cpu_system') {
+        if (proc.cpu_system_s == null) return '#9e9e9e';
+        const ratio = maxValues.cpu_system > 0 ? proc.cpu_system_s / maxValues.cpu_system : 0;
+        return greenToRed(ratio);
       } else if (mode === 'io') {
-        // Use gray for processes with no I/O data available
-        if (proc.io_read_bytes == null && proc.io_write_bytes == null) {
-          return '#9e9e9e';  // Gray indicates "no data"
-        }
+        if (proc.io_read_bytes == null && proc.io_write_bytes == null) return '#9e9e9e';
         const io = (proc.io_read_bytes ?? 0) + (proc.io_write_bytes ?? 0);
-        const ratio = maxIo > 0 ? io / maxIo : 0;
-        const r = Math.round(50 + 150 * ratio);
-        const g = Math.round(200 * (1 - ratio));
-        const b = Math.round(255 * ratio);
-        return `rgb(${r},${g},${b})`;
+        const ratio = maxValues.io > 0 ? io / maxValues.io : 0;
+        return tealToOrange(ratio);
+      } else if (mode === 'io_read') {
+        if (proc.io_read_bytes == null) return '#9e9e9e';
+        const ratio = maxValues.io_read > 0 ? proc.io_read_bytes / maxValues.io_read : 0;
+        return tealToOrange(ratio);
+      } else if (mode === 'io_write') {
+        if (proc.io_write_bytes == null) return '#9e9e9e';
+        const ratio = maxValues.io_write > 0 ? proc.io_write_bytes / maxValues.io_write : 0;
+        return tealToOrange(ratio);
+      } else if (mode === 'page_faults') {
+        if (proc.num_page_faults == null) return '#9e9e9e';
+        const ratio = maxValues.page_faults > 0 ? proc.num_page_faults / maxValues.page_faults : 0;
+        return greenToRed(ratio);
       }
-      return typeColors.default;
+      return getTypeColor(proc.name);
     }
 
     function formatBytes(b) {
@@ -497,35 +750,67 @@
     }
 
     // Display helpers that show "N/A" for unavailable values
+    // Uses data-tip attribute for custom tooltip on hover
     function displayBytes(b) {
+      if (b == null) return '<span style="color:var(--text-muted)">N/A</span>';
       const formatted = formatBytes(b);
-      return formatted !== null ? formatted : '<span style="color:var(--text-muted)">N/A</span>';
+      const raw = b.toLocaleString() + ' bytes';
+      return `<span class="has-tip" data-tip="${raw}">${formatted}</span>`;
     }
 
     function displayDuration(s) {
+      if (s == null) return '<span style="color:var(--text-muted)">N/A</span>';
       const formatted = formatDuration(s);
-      return formatted !== null ? formatted : '<span style="color:var(--text-muted)">N/A</span>';
+      const raw = s.toFixed(6) + ' s';
+      return `<span class="has-tip" data-tip="${raw}">${formatted}</span>`;
+    }
+
+    function formatTimestamp(isoString) {
+      if (!isoString) return { display: 'N/A', raw: '' };
+      try {
+        const date = new Date(isoString);
+        const hours = date.getHours().toString().padStart(2, '0');
+        const mins = date.getMinutes().toString().padStart(2, '0');
+        const secs = date.getSeconds().toString().padStart(2, '0');
+        const ms = date.getMilliseconds().toString().padStart(3, '0');
+        return {
+          display: `${hours}:${mins}:${secs}.${ms}`,
+          raw: isoString
+        };
+      } catch {
+        return { display: isoString, raw: isoString };
+      }
+    }
+
+    function displayTimestamp(isoString) {
+      const { display, raw } = formatTimestamp(isoString);
+      if (display === 'N/A') return '<span style="color:var(--text-muted)">N/A</span>';
+      return `<span class="has-tip" data-tip="${raw}">${display}</span>`;
+    }
+
+    function formatParentPid(ppid) {
+      if (!ppid) return '<span style="color:var(--text-muted)">N/A</span>';
+      
+      // Check if parent exists in current data
+      const parentProc = currentData?.processes?.find(p => p.pid === ppid);
+      if (parentProc) {
+        return `<a href="#" class="pid-link" data-pid="${ppid}">${ppid}</a> <span style="color:var(--text-muted)">(${parentProc.name})</span>`;
+      } else {
+        return `<span class="has-tip" data-tip="Parent not in trace">${ppid}</span> <span style="color:var(--text-muted)">(not in trace)</span>`;
+      }
     }
 
     let currentData = null;
+    let currentFileName = null;
     let globalStart = 0;
     let globalEnd = 0;
     let selectedProcPid = null; // Track selected process for state saving
+    let currentViewMode = 'timeline'; // 'timeline' or 'flamegraph'
+    let zoomLevel = 1.0; // 1.0 = 100%, 2.0 = 200%, etc.
 
     function buildTree(data) {
       const procMap = new Map(data.processes.map(p => [p.pid, { ...p, children: [] }]));
       
-      // Find root (has label or no parent in our set)
-      let root = null;
-      for (const p of procMap.values()) {
-        if (p.label) { root = p; break; }
-      }
-      if (!root) {
-        for (const p of procMap.values()) {
-          if (!procMap.has(p.ppid)) { root = p; break; }
-        }
-      }
-
       // Build tree from edges
       for (const e of data.edges) {
         const parent = procMap.get(e.parent);
@@ -533,6 +818,62 @@
         if (parent && child) {
           parent.children.push(child);
         }
+      }
+
+      // Find all root processes (those with no parent in our set, or labeled)
+      const roots = [];
+      const childPids = new Set(data.edges.map(e => e.child));
+      
+      for (const p of procMap.values()) {
+        // A root is either labeled, or has no parent edge pointing to it
+        if (p.label || !childPids.has(p.pid)) {
+          roots.push(p);
+        }
+      }
+
+      // Also add any orphaned processes (in trace but not connected to any root)
+      const connectedPids = new Set();
+      function markConnected(node) {
+        connectedPids.add(node.pid);
+        for (const child of node.children || []) {
+          markConnected(child);
+        }
+      }
+      roots.forEach(markConnected);
+      
+      // Add orphans as additional roots
+      for (const p of procMap.values()) {
+        if (!connectedPids.has(p.pid)) {
+          roots.push(p);
+        }
+      }
+
+      // Sort roots by start time
+      roots.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+
+      // Create a virtual root if we have multiple trees
+      let root;
+      if (roots.length === 1) {
+        root = roots[0];
+      } else if (roots.length > 1) {
+        // Calculate time bounds across ALL processes (not just roots)
+        const allStartTimes = data.processes.map(p => new Date(p.start_time).getTime());
+        const allEndTimes = data.processes.map(p => new Date(p.end_time).getTime());
+        const minStartMs = Math.min(...allStartTimes);
+        const maxEndMs = Math.max(...allEndTimes);
+        
+        // Create virtual root that contains all actual roots as children
+        root = {
+          pid: -1,
+          name: '(trace)',
+          children: roots,
+          start_time: new Date(minStartMs).toISOString(),
+          end_time: new Date(maxEndMs).toISOString(),
+          duration_s: (maxEndMs - minStartMs) / 1000,
+          isVirtual: true,
+        };
+      } else {
+        root = procMap.values().next().value;
       }
 
       return { root, procMap };
@@ -582,16 +923,33 @@
       const totalDuration = (globalEnd - globalStart) / 1000;
 
       // Compute stats (track whether data is available)
-      let totalCpu = 0, totalIoRead = 0, totalIoWrite = 0, maxCpu = 0, maxIo = 0;
+      let totalCpu = 0, totalIoRead = 0, totalIoWrite = 0;
       let hasIoReadData = false, hasIoWriteData = false;
+      const maxValues = {
+        cpu: 0, cpu_user: 0, cpu_system: 0,
+        io: 0, io_read: 0, io_write: 0,
+        duration: 0, memory: 0, private: 0,
+        peak_memory: 0, peak_private: 0, page_faults: 0
+      };
       for (const p of data.processes) {
         const cpu = (p.cpu_user_s || 0) + (p.cpu_system_s || 0);
         totalCpu += cpu;
         if (p.io_read_bytes != null) { totalIoRead += p.io_read_bytes; hasIoReadData = true; }
         if (p.io_write_bytes != null) { totalIoWrite += p.io_write_bytes; hasIoWriteData = true; }
-        if (cpu > maxCpu) maxCpu = cpu;
+        // Max values for color scaling
+        if (cpu > maxValues.cpu) maxValues.cpu = cpu;
+        if (p.cpu_user_s != null && p.cpu_user_s > maxValues.cpu_user) maxValues.cpu_user = p.cpu_user_s;
+        if (p.cpu_system_s != null && p.cpu_system_s > maxValues.cpu_system) maxValues.cpu_system = p.cpu_system_s;
         const io = (p.io_read_bytes || 0) + (p.io_write_bytes || 0);
-        if (io > maxIo) maxIo = io;
+        if (io > maxValues.io) maxValues.io = io;
+        if (p.io_read_bytes != null && p.io_read_bytes > maxValues.io_read) maxValues.io_read = p.io_read_bytes;
+        if (p.io_write_bytes != null && p.io_write_bytes > maxValues.io_write) maxValues.io_write = p.io_write_bytes;
+        if (p.duration_s != null && p.duration_s > maxValues.duration) maxValues.duration = p.duration_s;
+        if (p.working_set_bytes != null && p.working_set_bytes > maxValues.memory) maxValues.memory = p.working_set_bytes;
+        if (p.private_bytes != null && p.private_bytes > maxValues.private) maxValues.private = p.private_bytes;
+        if (p.peak_working_set_bytes != null && p.peak_working_set_bytes > maxValues.peak_memory) maxValues.peak_memory = p.peak_working_set_bytes;
+        if (p.peak_private_bytes != null && p.peak_private_bytes > maxValues.peak_private) maxValues.peak_private = p.peak_private_bytes;
+        if (p.num_page_faults != null && p.num_page_faults > maxValues.page_faults) maxValues.page_faults = p.num_page_faults;
       }
 
       const ioReadDisplay = hasIoReadData ? formatBytes(totalIoRead) : '<span style="color:var(--text-muted)">N/A</span>';
@@ -605,59 +963,213 @@
         <div class="stat"><div class="stat-value">${ioWriteDisplay}</div><div class="stat-label">I/O Write</div></div>
       `;
 
-      // Build rows for timeline view
-      const rows = flattenToRows(root);
-      const containerWidth = container.clientWidth - 32;
-      const msPerPixel = (globalEnd - globalStart) / containerWidth;
-
       container.innerHTML = '';
+      const containerWidth = container.clientWidth - 32;
+
+      if (currentViewMode === 'timeline') {
+        renderTimeline(container, root, containerWidth, colorMode, maxValues);
+      } else {
+        renderFlamegraph(container, root, containerWidth, colorMode, maxValues);
+      }
+
+      // Legend - dynamically built from actual processes in trace
+      renderLegend(legendDiv, data, colorMode);
+    }
+
+    function renderTimeline(container, root, containerWidth, colorMode, maxValues) {
+      const rows = flattenToRows(root);
+      const totalDurationMs = globalEnd - globalStart;
+      const totalSeconds = totalDurationMs / 1000;
+      
+      // Apply zoom: zoomed width is containerWidth * zoomLevel
+      const zoomedWidth = containerWidth * zoomLevel;
+      const msPerPixel = totalDurationMs / zoomedWidth;
+
+      // Create a wrapper for zoomed content
+      const wrapper = document.createElement('div');
+      wrapper.className = 'timeline-wrapper';
+      wrapper.style.width = zoomedWidth + 'px';
+
+      // Add time axis
+      createTimeAxis(wrapper, totalSeconds, zoomedWidth);
+
       for (const row of rows) {
         const rowDiv = document.createElement('div');
         rowDiv.className = 'flame-row';
+        rowDiv.style.position = 'relative';
+        rowDiv.style.height = '28px';
+        rowDiv.style.width = zoomedWidth + 'px';
         
-        // Sort by start time
-        row.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
-        
-        let lastEnd = globalStart;
         for (const proc of row) {
           const start = new Date(proc.start_time).getTime();
           const end = new Date(proc.end_time).getTime();
           
-          // Add spacer if gap
-          if (start > lastEnd) {
-            const gapWidth = (start - lastEnd) / msPerPixel;
-            if (gapWidth > 0) {
-              const spacer = document.createElement('div');
-              spacer.style.width = gapWidth + 'px';
-              spacer.style.flexShrink = '0';
-              rowDiv.appendChild(spacer);
-            }
-          }
-          
+          // Position absolutely based on actual time
+          const x = (start - globalStart) / msPerPixel;
           const width = Math.max(4, (end - start) / msPerPixel);
-          const block = document.createElement('div');
-          block.className = 'flame-block';
-          block.style.width = width + 'px';
-          block.style.flexShrink = '0';
-          block.style.backgroundColor = getColor(proc, colorMode, maxCpu, maxIo);
           
-          const shortName = (proc.name || 'unknown').replace('.exe', '');
-          block.innerHTML = `<span class="label">${shortName}</span>`;
-          
-          block.addEventListener('mouseenter', (e) => showTooltip(e, proc));
-          block.addEventListener('mousemove', (e) => moveTooltip(e));
-          block.addEventListener('mouseleave', hideTooltip);
-          block.addEventListener('click', () => showDetails(proc));
-          
+          const block = createBlock(proc, width, colorMode, maxValues);
+          block.style.position = 'absolute';
+          block.style.left = x + 'px';
           rowDiv.appendChild(block);
-          lastEnd = end;
         }
         
-        container.appendChild(rowDiv);
+        wrapper.appendChild(rowDiv);
       }
 
-      // Legend - dynamically built from actual processes in trace
-      if (colorMode === 'type') {
+      container.appendChild(wrapper);
+    }
+
+    function renderFlamegraph(container, root, containerWidth, colorMode, maxValues) {
+      // Calculate cumulative duration for each node (self + all descendants)
+      function calcCumulativeDuration(node) {
+        let sum = node.duration_s || 0;
+        for (const child of node.children || []) {
+          sum += calcCumulativeDuration(child);
+        }
+        node.cumulativeDuration = sum;
+        return sum;
+      }
+      calcCumulativeDuration(root);
+
+      // Root's cumulative duration is the total
+      const totalCumulativeDuration = root.cumulativeDuration || 1;
+      
+      // Apply zoom
+      const zoomedWidth = containerWidth * zoomLevel;
+      const pxPerSecond = zoomedWidth / totalCumulativeDuration;
+
+      // Create wrapper for zoomed content
+      const wrapper = document.createElement('div');
+      wrapper.className = 'timeline-wrapper';
+      wrapper.style.width = zoomedWidth + 'px';
+
+      // Add time axis (cumulative time, not wall-clock)
+      createTimeAxis(wrapper, totalCumulativeDuration, zoomedWidth);
+
+      // Render flamegraph rows (depth-first, building rows by level)
+      // Root at top, children below (icicle graph style, common for process trees)
+      const rowData = []; // Array of arrays, each inner array is [{proc, x, width}, ...]
+      
+      function layoutNode(node, depth, xOffset) {
+        if (!rowData[depth]) rowData[depth] = [];
+        
+        const width = Math.max(4, (node.cumulativeDuration || 0) * pxPerSecond);
+        rowData[depth].push({ proc: node, x: xOffset, width });
+
+        // Sort children by cumulative duration (largest first) for better layout
+        const sortedChildren = [...(node.children || [])].sort(
+          (a, b) => (b.cumulativeDuration || 0) - (a.cumulativeDuration || 0)
+        );
+
+        let childX = xOffset;
+        for (const child of sortedChildren) {
+          layoutNode(child, depth + 1, childX);
+          childX += (child.cumulativeDuration || 0) * pxPerSecond;
+        }
+      }
+
+      layoutNode(root, 0, 0);
+
+      // Render rows
+      for (const row of rowData) {
+        const rowDiv = document.createElement('div');
+        rowDiv.className = 'flame-row';
+        rowDiv.style.position = 'relative';
+        rowDiv.style.height = '28px';
+        rowDiv.style.width = zoomedWidth + 'px';
+
+        for (const { proc, x, width } of row) {
+          const block = createBlock(proc, width, colorMode, maxValues);
+          block.style.position = 'absolute';
+          block.style.left = x + 'px';
+          rowDiv.appendChild(block);
+        }
+
+        wrapper.appendChild(rowDiv);
+      }
+
+      container.appendChild(wrapper);
+    }
+
+    function createBlock(proc, width, colorMode, maxValues) {
+      const block = document.createElement('div');
+      block.className = 'flame-block';
+      block.style.width = width + 'px';
+      block.style.flexShrink = '0';
+      
+      if (proc.isVirtual) {
+        // Virtual root - make it subtle
+        block.style.backgroundColor = 'transparent';
+        block.style.border = '1px dashed var(--border)';
+        block.innerHTML = `<span class="label" style="color:var(--text-muted)">${proc.name}</span>`;
+        return block;
+      }
+      
+      block.style.backgroundColor = getColor(proc, colorMode, maxValues);
+      
+      const shortName = (proc.name || 'unknown').replace('.exe', '');
+      block.innerHTML = `<span class="label">${shortName}</span>`;
+      
+      block.addEventListener('mouseenter', (e) => showTooltip(e, proc));
+      block.addEventListener('mousemove', (e) => moveTooltip(e));
+      block.addEventListener('mouseleave', hideTooltip);
+      block.addEventListener('click', () => showDetails(proc));
+      
+      return block;
+    }
+
+    function createTimeAxis(container, totalSeconds, containerWidth, labelPrefix = '') {
+      // Remove existing time axis if any
+      const existingAxis = container.querySelector('.time-axis');
+      if (existingAxis) existingAxis.remove();
+
+      const axis = document.createElement('div');
+      axis.className = 'time-axis';
+
+      // Calculate nice interval
+      const targetMarkers = 8;
+      const rawInterval = totalSeconds / targetMarkers;
+      
+      // Round to nice values: 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600...
+      const niceIntervals = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 20, 30, 60, 120, 300, 600, 1200, 1800, 3600];
+      let interval = niceIntervals.find(i => i >= rawInterval) || rawInterval;
+
+      // Create markers
+      for (let t = 0; t <= totalSeconds; t += interval) {
+        const x = (t / totalSeconds) * containerWidth;
+        
+        // Marker line
+        const marker = document.createElement('div');
+        marker.className = 'time-marker';
+        marker.style.left = (x + 16) + 'px'; // Account for container padding
+        container.appendChild(marker);
+
+        // Label
+        const label = document.createElement('div');
+        label.className = 'time-label';
+        label.style.left = (x + 16) + 'px';
+        
+        // Format time
+        let timeText;
+        if (t >= 60) {
+          const mins = Math.floor(t / 60);
+          const secs = t % 60;
+          timeText = secs > 0 ? `${mins}m${secs}s` : `${mins}m`;
+        } else if (t >= 1) {
+          timeText = t % 1 === 0 ? `${t}s` : `${t.toFixed(1)}s`;
+        } else {
+          timeText = `${(t * 1000).toFixed(0)}ms`;
+        }
+        label.textContent = labelPrefix + timeText;
+        axis.appendChild(label);
+      }
+
+      container.appendChild(axis);
+    }
+
+    function renderLegend(legendDiv, data, colorMode) {
+      if (colorMode === 'name') {
         // Count processes by normalized name
         const nameCounts = new Map();
         for (const p of data.processes) {
@@ -676,16 +1188,40 @@
               <span>${name} (${count})</span>
             </div>
           `).join('');
-      } else if (colorMode === 'cpu') {
-        legendDiv.innerHTML = `<div class="legend-item">Color intensity shows CPU time</div>`;
-      } else if (colorMode === 'io') {
-        legendDiv.innerHTML = `
-          <div class="legend-item">Color intensity shows I/O activity</div>
-          <div class="legend-item">
-            <div class="legend-color" style="background:#9e9e9e"></div>
-            <span>I/O data unavailable</span>
-          </div>
-        `;
+      } else {
+        // Gradient-based legends
+        const legendConfigs = {
+          duration: { low: 'Fast', high: 'Slow', lowColor: greenToRed(0), highColor: greenToRed(1) },
+          memory: { low: 'Low', high: 'High', lowColor: blueToPurple(0), highColor: blueToPurple(1) },
+          private: { low: 'Low', high: 'High', lowColor: blueToPurple(0), highColor: blueToPurple(1) },
+          peak_memory: { low: 'Low', high: 'High', lowColor: blueToPurple(0), highColor: blueToPurple(1) },
+          peak_private: { low: 'Low', high: 'High', lowColor: blueToPurple(0), highColor: blueToPurple(1) },
+          cpu: { low: 'Low', high: 'High', lowColor: greenToRed(0), highColor: greenToRed(1) },
+          cpu_user: { low: 'Low', high: 'High', lowColor: greenToRed(0), highColor: greenToRed(1) },
+          cpu_system: { low: 'Low', high: 'High', lowColor: greenToRed(0), highColor: greenToRed(1) },
+          io: { low: 'Low', high: 'High', lowColor: tealToOrange(0), highColor: tealToOrange(1) },
+          io_read: { low: 'Low', high: 'High', lowColor: tealToOrange(0), highColor: tealToOrange(1) },
+          io_write: { low: 'Low', high: 'High', lowColor: tealToOrange(0), highColor: tealToOrange(1) },
+          page_faults: { low: 'Few', high: 'Many', lowColor: greenToRed(0), highColor: greenToRed(1) },
+        };
+        
+        const config = legendConfigs[colorMode];
+        if (config) {
+          legendDiv.innerHTML = `
+            <div class="legend-item">
+              <div class="legend-color" style="background:${config.lowColor}"></div>
+              <span>${config.low}</span>
+            </div>
+            <div class="legend-item">
+              <div class="legend-color" style="background:${config.highColor}"></div>
+              <span>${config.high}</span>
+            </div>
+            <div class="legend-item">
+              <div class="legend-color" style="background:#9e9e9e"></div>
+              <span>No data</span>
+            </div>
+          `;
+        }
       }
     }
 
@@ -711,14 +1247,21 @@
         `;
       }
       
+      // Calculate relative start time
+      const procStart = new Date(proc.start_time).getTime();
+      const relativeStartS = (procStart - globalStart) / 1000;
+
       tooltip.innerHTML = `
         <div class="tooltip-title">${proc.name} (PID ${proc.pid})</div>
         <div class="tooltip-row"><span class="key">Duration</span><span class="value">${displayDuration(proc.duration_s)}</span></div>
+        <div class="tooltip-row"><span class="key">Started at</span><span class="value">+${formatDuration(relativeStartS) || '0 s'}</span></div>
         <div class="tooltip-row"><span class="key">CPU User</span><span class="value">${displayDuration(proc.cpu_user_s)}</span></div>
         <div class="tooltip-row"><span class="key">CPU System</span><span class="value">${displayDuration(proc.cpu_system_s)}</span></div>
         <div class="tooltip-row"><span class="key">I/O Read</span><span class="value">${displayBytes(proc.io_read_bytes)}</span></div>
         <div class="tooltip-row"><span class="key">I/O Write</span><span class="value">${displayBytes(proc.io_write_bytes)}</span></div>
         <div class="tooltip-row"><span class="key">Working Set</span><span class="value">${displayBytes(proc.working_set_bytes)}</span></div>
+        <div class="tooltip-row"><span class="key">Private Bytes</span><span class="value">${displayBytes(proc.private_bytes)}</span></div>
+        <div class="tooltip-row"><span class="key">Page Faults</span><span class="value">${proc.num_page_faults != null ? proc.num_page_faults.toLocaleString() : '<span style="color:var(--text-muted)">N/A</span>'}</span></div>
         <div class="tooltip-cmd">${cmdline.length > 200 ? cmdline.slice(0, 200) + '...' : cmdline}</div>
         ${responseFilesHtml}
       `;
@@ -735,6 +1278,39 @@
     
     function hideTooltip() {
       tooltip.classList.add('hidden');
+    }
+
+    // Mini tooltip for inline values (bytes, duration, timestamps)
+    const miniTooltip = document.getElementById('miniTooltip');
+    
+    document.addEventListener('mouseenter', (e) => {
+      if (e.target.classList?.contains('has-tip')) {
+        const tip = e.target.dataset.tip;
+        if (tip) {
+          miniTooltip.textContent = tip;
+          miniTooltip.classList.remove('hidden');
+          positionMiniTooltip(e);
+        }
+      }
+    }, true);
+
+    document.addEventListener('mousemove', (e) => {
+      if (e.target.classList?.contains('has-tip') && !miniTooltip.classList.contains('hidden')) {
+        positionMiniTooltip(e);
+      }
+    }, true);
+
+    document.addEventListener('mouseleave', (e) => {
+      if (e.target.classList?.contains('has-tip')) {
+        miniTooltip.classList.add('hidden');
+      }
+    }, true);
+
+    function positionMiniTooltip(e) {
+      const x = Math.min(e.clientX + 12, window.innerWidth - miniTooltip.offsetWidth - 10);
+      const y = e.clientY - miniTooltip.offsetHeight - 8;
+      miniTooltip.style.left = x + 'px';
+      miniTooltip.style.top = (y > 10 ? y : e.clientY + 16) + 'px';
     }
 
     const detailsPanel = document.getElementById('detailsPanel');
@@ -767,23 +1343,34 @@
       detailsContent.innerHTML = `
         <div class="details-grid">
           <div class="details-item"><div class="label">PID</div><div class="value">${proc.pid}</div></div>
-          <div class="details-item"><div class="label">Parent PID</div><div class="value">${proc.ppid || 'N/A'}</div></div>
-          <div class="details-item"><div class="label">Start Time</div><div class="value">${proc.start_time || 'N/A'}</div></div>
-          <div class="details-item"><div class="label">End Time</div><div class="value">${proc.end_time || 'N/A'}</div></div>
+          <div class="details-item"><div class="label">Parent PID</div><div class="value">${formatParentPid(proc.ppid)}</div></div>
+          <div class="details-item"><div class="label">Start Time</div><div class="value">${displayTimestamp(proc.start_time)}</div></div>
+          <div class="details-item"><div class="label">End Time</div><div class="value">${displayTimestamp(proc.end_time)}</div></div>
           <div class="details-item"><div class="label">Duration</div><div class="value">${displayDuration(proc.duration_s)}</div></div>
           <div class="details-item"><div class="label">CPU User</div><div class="value">${displayDuration(proc.cpu_user_s)}</div></div>
           <div class="details-item"><div class="label">CPU System</div><div class="value">${displayDuration(proc.cpu_system_s)}</div></div>
           <div class="details-item"><div class="label">I/O Read</div><div class="value">${displayBytes(proc.io_read_bytes)}</div></div>
           <div class="details-item"><div class="label">I/O Write</div><div class="value">${displayBytes(proc.io_write_bytes)}</div></div>
           <div class="details-item"><div class="label">Working Set</div><div class="value">${displayBytes(proc.working_set_bytes)}</div></div>
+          <div class="details-item"><div class="label">Peak Working Set</div><div class="value">${displayBytes(proc.peak_working_set_bytes)}</div></div>
           <div class="details-item"><div class="label">Private Bytes</div><div class="value">${displayBytes(proc.private_bytes)}</div></div>
-          <div class="details-item"><div class="label">Executable</div><div class="value">${proc.exe || 'N/A'}</div></div>
+          <div class="details-item"><div class="label">Peak Private</div><div class="value">${displayBytes(proc.peak_private_bytes)}</div></div>
+          <div class="details-item"><div class="label">Page Faults</div><div class="value">${proc.num_page_faults != null ? proc.num_page_faults.toLocaleString() : '<span style="color:var(--text-muted)">N/A</span>'}</div></div>
+        </div>
+        <div class="details-section">
+          <div class="details-section-title">Executable</div>
+          <div class="details-cmdline">${proc.exe || '<span style="color:var(--text-muted)">N/A</span>'}</div>
+        </div>
+        <div class="details-section">
+          <div class="details-section-title">Working Directory</div>
+          <div class="details-cmdline">${proc.cwd || '<span style="color:var(--text-muted)">N/A</span>'}</div>
         </div>
         <div class="details-section">
           <div class="details-section-title">Command Line</div>
           <div class="details-cmdline">${escapeHtml(cmdline)}</div>
         </div>
         ${responseFilesHtml}
+        ${formatEnvironSection(proc.environ)}
       `;
 
       detailsPanel.classList.remove('hidden');
@@ -793,9 +1380,83 @@
       return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
+    function formatEnvironSection(environ) {
+      if (!environ || Object.keys(environ).length === 0) {
+        return '';
+      }
+      
+      const entries = Object.entries(environ).sort((a, b) => a[0].localeCompare(b[0]));
+      const count = entries.length;
+      
+      const envHtml = entries.map(([key, value]) => {
+        const formattedValue = formatEnvValue(key, value || '');
+        return `<div class="env-row"><span class="env-key">${escapeHtml(key)}</span>=${formattedValue}</div>`;
+      }).join('');
+      
+      return `
+        <div class="details-section">
+          <details class="env-details" open>
+            <summary class="details-section-title" style="cursor:pointer">
+              Environment Variables (${count})
+            </summary>
+            <div class="env-list">${envHtml}</div>
+          </details>
+        </div>
+      `;
+    }
+
+    function formatEnvValue(key, value) {
+      if (!value) return '<span class="env-value"></span>';
+      
+      // Skip URL-like values
+      if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
+        return `<span class="env-value">${escapeHtml(value)}</span>`;
+      }
+      
+      // Detect if this looks like a path list
+      // Check for common path list separators and path-like content
+      const hasSemicolonPaths = value.includes(';') && (
+        value.includes(':\\') || // Windows paths like C:\
+        /;[A-Za-z]:|^[A-Za-z]:/.test(value) // Drive letters
+      );
+      const hasColonPaths = value.includes(':') && !value.includes(':\\') && (
+        value.startsWith('/') && // Must start with / for Unix paths
+        /^\/[^:]+:\//.test(value) // Pattern like /path:/path
+      );
+      
+      let separator = null;
+      if (hasSemicolonPaths) separator = ';';
+      else if (hasColonPaths) separator = ':';
+      
+      if (separator) {
+        const parts = value.split(separator).filter(p => p.length > 0);
+        if (parts.length > 1) {
+          const listHtml = parts.map(p => 
+            `<div class="env-path-item">${escapeHtml(p)}</div>`
+          ).join('');
+          return `<div class="env-path-list">${listHtml}</div>`;
+        }
+      }
+      
+      // Regular value
+      return `<span class="env-value">${escapeHtml(value)}</span>`;
+    }
+
     document.getElementById('closeDetails').addEventListener('click', () => {
       detailsPanel.classList.add('hidden');
       selectedProcPid = null; // Clear selection for state saving
+    });
+
+    // Handle clicks on PID links to navigate to parent process
+    detailsPanel.addEventListener('click', (e) => {
+      if (e.target.classList.contains('pid-link')) {
+        e.preventDefault();
+        const pid = parseInt(e.target.dataset.pid, 10);
+        const proc = currentData?.processes?.find(p => p.pid === pid);
+        if (proc) {
+          showDetails(proc);
+        }
+      }
     });
 
     function loadFromFile(file) {
@@ -807,6 +1468,7 @@
         try {
           const data = JSON.parse(e.target.result);
           currentData = data;
+          currentFileName = file.name;
           render(data);
           updateDropZoneState();
         } catch (err) {
@@ -822,6 +1484,126 @@
     // Event listeners
     document.getElementById('colorMode').addEventListener('change', () => {
       if (currentData) render(currentData);
+    });
+
+    // View mode toggle
+    document.getElementById('viewTimeline').addEventListener('click', () => {
+      if (currentViewMode !== 'timeline') {
+        currentViewMode = 'timeline';
+        document.getElementById('viewTimeline').classList.add('active');
+        document.getElementById('viewFlamegraph').classList.remove('active');
+        if (currentData) render(currentData);
+      }
+    });
+
+    document.getElementById('viewFlamegraph').addEventListener('click', () => {
+      if (currentViewMode !== 'flamegraph') {
+        currentViewMode = 'flamegraph';
+        document.getElementById('viewFlamegraph').classList.add('active');
+        document.getElementById('viewTimeline').classList.remove('active');
+        if (currentData) render(currentData);
+      }
+    });
+
+    // Zoom controls
+    function updateZoomDisplay() {
+      document.getElementById('zoomLevel').textContent = Math.round(zoomLevel * 100) + '%';
+    }
+
+    function setZoom(newZoom, centerX = null) {
+      const container = document.getElementById('flamegraph');
+      const containerWidth = container.clientWidth - 32;
+      
+      // Clamp zoom level
+      newZoom = Math.max(1, Math.min(20, newZoom));
+      
+      // Calculate scroll position to keep center point stationary
+      let newScrollLeft = 0;
+      if (centerX !== null && zoomLevel !== newZoom) {
+        const scrollLeft = container.scrollLeft;
+        const zoomedWidthOld = containerWidth * zoomLevel;
+        const zoomedWidthNew = containerWidth * newZoom;
+        
+        // Point in timeline space that should stay under cursor
+        const timelineX = scrollLeft + centerX;
+        const timelineRatio = timelineX / zoomedWidthOld;
+        
+        // New position of that point
+        const newTimelineX = timelineRatio * zoomedWidthNew;
+        newScrollLeft = newTimelineX - centerX;
+      } else {
+        // Keep relative scroll position
+        const scrollRatio = container.scrollLeft / (containerWidth * zoomLevel - containerWidth);
+        newScrollLeft = scrollRatio * (containerWidth * newZoom - containerWidth);
+      }
+      
+      zoomLevel = newZoom;
+      updateZoomDisplay();
+      
+      if (currentData) {
+        render(currentData);
+        // Restore scroll position after render
+        requestAnimationFrame(() => {
+          container.scrollLeft = Math.max(0, newScrollLeft);
+        });
+      }
+    }
+
+    document.getElementById('zoomIn').addEventListener('click', () => {
+      setZoom(zoomLevel * 1.5);
+    });
+
+    document.getElementById('zoomOut').addEventListener('click', () => {
+      setZoom(zoomLevel / 1.5);
+    });
+
+    document.getElementById('zoomReset').addEventListener('click', () => {
+      zoomLevel = 1.0;
+      updateZoomDisplay();
+      if (currentData) {
+        render(currentData);
+        document.getElementById('flamegraph').scrollLeft = 0;
+      }
+    });
+
+    // Mouse wheel zoom
+    document.getElementById('flamegraph').addEventListener('wheel', (e) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const rect = e.currentTarget.getBoundingClientRect();
+        const centerX = e.clientX - rect.left;
+        const delta = e.deltaY > 0 ? 0.8 : 1.25;
+        setZoom(zoomLevel * delta, centerX);
+      }
+    }, { passive: false });
+
+    // Drag to pan
+    let isDragging = false;
+    let dragStartX = 0;
+    let dragStartScroll = 0;
+
+    document.getElementById('flamegraph').addEventListener('mousedown', (e) => {
+      if (e.button === 0) { // Left mouse button
+        isDragging = true;
+        dragStartX = e.clientX;
+        dragStartScroll = e.currentTarget.scrollLeft;
+        e.currentTarget.style.cursor = 'grabbing';
+      }
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (isDragging) {
+        const container = document.getElementById('flamegraph');
+        const dx = dragStartX - e.clientX;
+        container.scrollLeft = dragStartScroll + dx;
+      }
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (isDragging) {
+        isDragging = false;
+        document.getElementById('flamegraph').style.cursor = 'grab';
+      }
     });
 
     // Drag and drop
@@ -860,10 +1642,51 @@
     function updateDropZoneState() {
       if (currentData) {
         dropZone.classList.add('has-data');
-        dropZone.innerHTML = `<span style="color: var(--accent);">✓ Data loaded</span> — ${currentData.processes.length} processes`;
+        const displayName = currentFileName || 'Data';
+        dropZone.innerHTML = `<span style="color: var(--accent);">${displayName}</span> — ${currentData.processes.length} processes`;
         saveBtn.disabled = false;
         dataStatus.textContent = '';
         dataStatus.classList.add('loaded');
+        updateColorModeOptions();
+      }
+    }
+
+    function updateColorModeOptions() {
+      if (!currentData) return;
+      
+      const colorModeSelect = document.getElementById('colorMode');
+      const procs = currentData.processes;
+      
+      // Check data availability for each field
+      const availability = {
+        duration: procs.some(p => p.duration_s != null),
+        memory: procs.some(p => p.working_set_bytes != null),
+        private: procs.some(p => p.private_bytes != null),
+        peak_memory: procs.some(p => p.peak_working_set_bytes != null),
+        peak_private: procs.some(p => p.peak_private_bytes != null),
+        cpu: procs.some(p => p.cpu_user_s != null || p.cpu_system_s != null),
+        cpu_user: procs.some(p => p.cpu_user_s != null),
+        cpu_system: procs.some(p => p.cpu_system_s != null),
+        io: procs.some(p => p.io_read_bytes != null || p.io_write_bytes != null),
+        io_read: procs.some(p => p.io_read_bytes != null),
+        io_write: procs.some(p => p.io_write_bytes != null),
+        page_faults: procs.some(p => p.num_page_faults != null),
+      };
+      
+      // Update option states
+      for (const option of colorModeSelect.options) {
+        const available = option.value === 'name' || availability[option.value] !== false;
+        option.disabled = !available;
+        option.textContent = option.textContent.replace(/ \(no data\)$/, '');
+        if (!available) {
+          option.textContent += ' (no data)';
+        }
+      }
+      
+      // If current selection is disabled, switch to 'name'
+      if (colorModeSelect.selectedOptions[0]?.disabled) {
+        colorModeSelect.value = 'name';
+        render(currentData);
       }
     }
 
@@ -899,6 +1722,8 @@
     const EMBEDDED_DATA = ${JSON.stringify(data)};
     const EMBEDDED_COLOR_MODE = ${JSON.stringify(colorMode)};
     const EMBEDDED_SELECTED_PID = ${JSON.stringify(selectedPid)};
+    const EMBEDDED_FILE_NAME = ${JSON.stringify(currentFileName)};
+    const EMBEDDED_VIEW_MODE = ${JSON.stringify(currentViewMode)};
 `;
       
       // Find the script section and inject embedded data
@@ -911,8 +1736,17 @@
     // Auto-load embedded data on page load
     if (typeof EMBEDDED_DATA !== 'undefined' && EMBEDDED_DATA) {
       document.addEventListener('DOMContentLoaded', () => {
-        document.getElementById('colorMode').value = EMBEDDED_COLOR_MODE || 'type';
+        document.getElementById('colorMode').value = EMBEDDED_COLOR_MODE || 'name';
         currentData = EMBEDDED_DATA;
+        currentFileName = EMBEDDED_FILE_NAME || null;
+        currentViewMode = EMBEDDED_VIEW_MODE || 'timeline';
+        
+        // Update view toggle buttons
+        if (currentViewMode === 'flamegraph') {
+          document.getElementById('viewFlamegraph').classList.add('active');
+          document.getElementById('viewTimeline').classList.remove('active');
+        }
+        
         render(currentData);
         updateDropZoneState();
         

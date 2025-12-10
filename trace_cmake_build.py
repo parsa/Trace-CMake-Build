@@ -35,17 +35,17 @@ def iso(ts: float | None) -> str | None:
 
 def read_response_file(path: str) -> str | None:
     """Read an MSVC response file (@file.rsp) if it exists.
-
+    
     MSVC writes .rsp files in UTF-16 LE with BOM, so we detect by BOM first.
     """
     try:
         # Read raw bytes to detect encoding
         with open(path, "rb") as f:
             raw = f.read()
-
+        
         if not raw:
             return None
-
+        
         # Check for BOM (Byte Order Mark)
         if raw.startswith(b"\xff\xfe"):
             # UTF-16 LE with BOM
@@ -162,11 +162,11 @@ class ProcessTracer:
                 attrs=["ppid", "name", "cmdline", "create_time", "exe"]
             )
             create_time = pinfo.get("create_time") or 0
-
+            
             # Skip processes created before trace started (with 1s buffer for clock skew)
             if not force and create_time < self.trace_start - 1.0:
                 return False
-
+            
             # Skip if not a descendant of root (unless it IS root or force)
             if (
                 not force
@@ -179,7 +179,7 @@ class ProcessTracer:
 
             # memory_full_info may fail or have different fields on different OSes
             try:
-                mem = proc.memory_full_info()
+                mem = proc.memory_full_info()  # Windows-specific
             except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
                 try:
                     mem = proc.memory_info()  # fallback to basic memory info
@@ -188,7 +188,7 @@ class ProcessTracer:
 
             # io_counters() may not be available on all platforms (e.g. macOS without root)
             try:
-                io = proc.io_counters()
+                io = proc.io_counters()  # Linux-specific
             except (
                 psutil.NoSuchProcess,
                 psutil.AccessDenied,
@@ -196,23 +196,24 @@ class ProcessTracer:
                 AttributeError,
             ):
                 io = None
-
+            
             # Get cwd and environ (can fail on some processes)
             try:
                 cwd = proc.cwd()
             except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
                 cwd = None
-
+            
             try:
                 environ = dict(proc.environ())
             except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
                 environ = None
-
+                
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             return False
 
         # Extract memory stats (fields vary by OS)
         if mem is not None:
+            # Windows-specific fields
             private_bytes = getattr(mem, "private", None)
             working_set_bytes = getattr(mem, "rss", None)
             peak_working_set_bytes = getattr(
@@ -221,7 +222,7 @@ class ProcessTracer:
             num_page_faults = getattr(
                 mem, "num_page_faults", None
             )  # Windows-specific
-            # Windows doesn't have peak_private directly; use peak_pagefile as approximation
+        # Windows doesn't have peak_private directly; use peak_pagefile as approximation
             peak_private_bytes = getattr(
                 mem, "peak_pagefile", None
             )  # Windows-specific
@@ -314,39 +315,39 @@ class ProcessTracer:
     def _poll_all_descendants(self) -> Set[int]:
         """Poll all tracked processes and any new descendants. Returns set of alive PIDs."""
         alive_now: Set[int] = set()
-
+        
         # First, scan process_iter for any processes that might be descendants
         for p in psutil.process_iter(attrs=["pid", "ppid", "create_time"]):
             try:
                 pid = p.info["pid"]
                 create_time = p.info.get("create_time") or 0
-
+                
                 # Quick filter: skip if created before trace started
                 if create_time < self.trace_start - 1.0:
                     continue
-
+                
                 # If already tracked, update it
                 if pid in self.processes:
                     if self._snapshot_process(p):
                         alive_now.add(pid)
                     continue
-
+                
                 # Check if it's the root or a descendant
                 if pid == self.root_pid or self._is_descendant_of_root(pid):
                     if self._snapshot_process(p):
                         alive_now.add(pid)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
-
+        
         return alive_now
 
     def trace_command(self, cmd: list[str], label: str):
         print(f"[trace] starting {label}: {' '.join(cmd)}", flush=True)
-
+        
         self.trace_start = time.time()
         proc = subprocess.Popen(cmd)
         self.root_pid = proc.pid
-
+        
         # Initialize root process record
         try:
             root_ps = psutil.Process(self.root_pid)
@@ -376,10 +377,10 @@ class ProcessTracer:
             }
 
         root_exited_at: Optional[float] = None
-
+        
         while True:
             alive_now = self._poll_all_descendants()
-
+            
             # Mark dead any tracked process no longer alive
             for pid in list(self.processes.keys()):
                 if (
@@ -393,16 +394,16 @@ class ProcessTracer:
                 if root_exited_at is None:
                     root_exited_at = time.time()
                     self._mark_dead(self.root_pid)
-
+                
                 # Check if all tracked processes are done
                 all_done = all(
                     rec.get("end_time") is not None
                     for rec in self.processes.values()
                 )
-
+                
                 if all_done:
                     break
-
+                
                 # Timeout: don't wait forever for orphaned processes
                 if time.time() - root_exited_at > self.post_exit_timeout:
                     # Mark remaining as dead
@@ -410,7 +411,7 @@ class ProcessTracer:
                         if rec.get("end_time") is None:
                             self._mark_dead(pid)
                     break
-
+            
             time.sleep(self.poll_interval)
 
         print(f"[trace] finished {label} (exit {proc.returncode})", flush=True)
