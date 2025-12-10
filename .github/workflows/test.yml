@@ -1,0 +1,136 @@
+name: Test
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create test project
+        shell: bash
+        run: |
+          mkdir -p test_project
+          cd test_project
+          
+          cat > CMakeLists.txt << 'EOF'
+          cmake_minimum_required(VERSION 3.14)
+          project(test_project CXX)
+          
+          set(CMAKE_CXX_STANDARD 17)
+          
+          include(FetchContent)
+          FetchContent_Declare(
+            googletest
+            GIT_REPOSITORY https://github.com/google/googletest.git
+            GIT_TAG v1.14.0
+          )
+          FetchContent_MakeAvailable(googletest)
+          
+          add_executable(demo_test test_main.cpp)
+          target_link_libraries(demo_test GTest::gtest_main)
+          
+          enable_testing()
+          add_test(NAME demo_test COMMAND demo_test)
+          EOF
+          
+          cat > test_main.cpp << 'EOF'
+          #include <gtest/gtest.h>
+          
+          int factorial(int n) {
+              return (n <= 1) ? 1 : n * factorial(n - 1);
+          }
+          
+          TEST(FactorialTest, HandlesZero) {
+              EXPECT_EQ(factorial(0), 1);
+          }
+          
+          TEST(FactorialTest, HandlesPositive) {
+              EXPECT_EQ(factorial(1), 1);
+              EXPECT_EQ(factorial(5), 120);
+              EXPECT_EQ(factorial(10), 3628800);
+          }
+          EOF
+          
+          mkdir build
+
+      - name: Trace CMake configure and build
+        shell: bash
+        run: |
+          python trace_cmake_build.py \
+            --output trace.json \
+            --label "gtest-build" \
+            -- bash -c 'cd test_project/build && cmake .. && cmake --build . --config Release'
+
+      - name: Validate trace output
+        shell: python
+        run: |
+          import json
+          
+          with open('trace.json') as f:
+              data = json.load(f)
+          
+          procs = data['processes']
+          edges = data['edges']
+          
+          print(f'Processes: {len(procs)}')
+          print(f'Edges: {len(edges)}')
+          
+          # Basic validation
+          assert len(procs) > 0, 'No processes captured'
+          assert len(edges) > 0, 'No edges captured'
+          
+          # Check required fields
+          for p in procs:
+              assert 'pid' in p, 'Missing pid'
+              assert 'name' in p, 'Missing name'
+              assert 'cmdline' in p, 'Missing cmdline'
+              assert 'start_time' in p, 'Missing start_time'
+              assert 'end_time' in p, 'Missing end_time'
+              assert 'duration_s' in p, 'Missing duration_s'
+              assert 'cpu_user_s' in p, 'Missing cpu_user_s'
+          
+          # Check for cmake process
+          cmake_procs = [p for p in procs if 'cmake' in (p.get('name') or '').lower()]
+          assert len(cmake_procs) > 0, 'No cmake process found'
+          
+          # Check for compiler process
+          compiler_names = ['clang', 'gcc', 'g++', 'c++', 'cl.exe', 'cc']
+          compiler_procs = [p for p in procs if any(c in (p.get('name') or '').lower() for c in compiler_names)]
+          assert len(compiler_procs) > 0, f'No compiler process found. Names: {[p.get("name") for p in procs]}'
+          
+          print('Trace validation passed!')
+          print(f'Found {len(cmake_procs)} cmake processes')
+          print(f'Found {len(compiler_procs)} compiler processes')
+
+      - name: Run traced tests
+        shell: bash
+        run: |
+          cd test_project/build
+          ctest --output-on-failure -C Release
+
+      - name: Upload trace artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trace-${{ matrix.os }}
+          path: trace.json
+
