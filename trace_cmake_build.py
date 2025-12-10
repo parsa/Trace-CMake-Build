@@ -69,7 +69,7 @@ def read_response_file(path: str) -> str | None:
 
 
 def extract_response_files(cmdline: list[str] | None) -> Dict[str, str]:
-    """Extract and read any @response.rsp files or temp .cmd scripts from command line."""
+    """Extract and read any @response files or temp scripts from command line."""
     if not cmdline:
         return {}
     result = {}
@@ -80,6 +80,12 @@ def extract_response_files(cmdline: list[str] | None) -> Dict[str, str]:
             content = read_response_file(rsp_path)
             if content:
                 result[rsp_path] = content
+        # Tracker.exe temp files: @*.tmp (MSBuild file tracking config)
+        elif arg.startswith("@") and arg.endswith(".tmp"):
+            tmp_path = arg[1:]  # Remove @ prefix
+            content = read_response_file(tmp_path)
+            if content:
+                result[tmp_path] = content
         # MSBuild temp batch scripts: .../MSBuildTemp/tmp*.cmd
         elif "MSBuildTemp" in arg and arg.endswith(".cmd"):
             content = read_response_file(arg)
